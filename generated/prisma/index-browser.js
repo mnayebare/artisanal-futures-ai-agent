@@ -121,49 +121,59 @@ exports.Prisma.TransactionIsolationLevel = makeStrictEnum({
   Serializable: 'Serializable'
 });
 
-exports.Prisma.PostScalarFieldEnum = {
-  id: 'id',
-  name: 'name',
-  createdAt: 'createdAt',
-  updatedAt: 'updatedAt',
-  createdById: 'createdById'
-};
-
-exports.Prisma.AccountScalarFieldEnum = {
-  id: 'id',
-  userId: 'userId',
-  type: 'type',
-  provider: 'provider',
-  providerAccountId: 'providerAccountId',
-  refresh_token: 'refresh_token',
-  access_token: 'access_token',
-  expires_at: 'expires_at',
-  token_type: 'token_type',
-  scope: 'scope',
-  id_token: 'id_token',
-  session_state: 'session_state',
-  refresh_token_expires_in: 'refresh_token_expires_in'
-};
-
-exports.Prisma.SessionScalarFieldEnum = {
-  id: 'id',
-  sessionToken: 'sessionToken',
-  userId: 'userId',
-  expires: 'expires'
-};
-
 exports.Prisma.UserScalarFieldEnum = {
   id: 'id',
-  name: 'name',
   email: 'email',
-  emailVerified: 'emailVerified',
-  image: 'image'
+  name: 'name',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 };
 
-exports.Prisma.VerificationTokenScalarFieldEnum = {
-  identifier: 'identifier',
-  token: 'token',
-  expires: 'expires'
+exports.Prisma.ProductScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  productName: 'productName',
+  category: 'category',
+  price: 'price',
+  tag: 'tag',
+  material: 'material',
+  description: 'description',
+  imageUrl: 'imageUrl',
+  inStock: 'inStock',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.SavedProductScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  productId: 'productId',
+  savedAt: 'savedAt'
+};
+
+exports.Prisma.ChatSessionScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  title: 'title',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.ChatMessageScalarFieldEnum = {
+  id: 'id',
+  sessionId: 'sessionId',
+  role: 'role',
+  text: 'text',
+  imageUrl: 'imageUrl',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.ChatResultScalarFieldEnum = {
+  id: 'id',
+  sessionId: 'sessionId',
+  productId: 'productId',
+  rank: 'rank',
+  createdAt: 'createdAt'
 };
 
 exports.Prisma.SortOrder = {
@@ -183,11 +193,12 @@ exports.Prisma.NullsOrder = {
 
 
 exports.Prisma.ModelName = {
-  Post: 'Post',
-  Account: 'Account',
-  Session: 'Session',
   User: 'User',
-  VerificationToken: 'VerificationToken'
+  Product: 'Product',
+  SavedProduct: 'SavedProduct',
+  ChatSession: 'ChatSession',
+  ChatMessage: 'ChatMessage',
+  ChatResult: 'ChatResult'
 };
 
 /**

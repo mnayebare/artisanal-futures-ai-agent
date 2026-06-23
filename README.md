@@ -1,3 +1,33 @@
+# running the application
+npm run dev- Development mode
+npm run build - compiles for production
+npm run start - runs the production build (needs build first)
+npm run lint- Checks your code for errors
+
+
+# working with prisma
+npx prisma migrate dev --name init    (migrates data from ORM)
+npx prisma generate - (builds the TypeScript client) 
+npx prisma db seed              - (adds data to the seed)
+npx prisma migrate reset - (to drop the development database)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Create T3 App
 
 This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.

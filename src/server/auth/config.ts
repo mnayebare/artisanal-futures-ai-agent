@@ -43,7 +43,9 @@ export const authConfig = {
      * @see https://next-auth.js.org/providers/github
      */
   ],
-  adapter: PrismaAdapter(db),
+// with this
+// eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-explicit-any
+adapter: PrismaAdapter(db as any),
   callbacks: {
     session: ({ session, user }) => ({
       ...session,
