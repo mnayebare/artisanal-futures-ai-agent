@@ -18,15 +18,9 @@ npx prisma migrate reset - (to drop the development database)
 
 
 
-
-
-
-
-
-
-
-
-
+#######################
+Boiler plate stuff
+######################
 
 # Create T3 App
 

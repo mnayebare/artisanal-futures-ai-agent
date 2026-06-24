@@ -2,41 +2,43 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
+import {
+  sendChatMessage,
+  isTrendQuery,
+  needsPlatformSelection,
+  PLATFORM_OPTIONS,
+  type TrendPlatform,
+  type TrendResult,
+  type Product,
+} from "~/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type Role = "agent" | "user";
 
 interface Message {
-  role: Role;
-  text: string;
-}
-
-interface Product {
-  id: string;
-  name: string;
-  category: string;
-  price: number;
-  inStock: boolean;
-  imageUrl?: string;
+  role:              Role;
+  text:              string;
+  trends?:           TrendResult[];
+  platform?:         TrendPlatform;
+  awaitingPlatform?: boolean;
 }
 
 interface ChatSession {
-  id: string;
-  title: string;
+  id:       string;
+  title:    string;
   messages: Message[];
-  results: Product[];
+  results:  Product[];
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // Olive brand palette
 const olive = {
   50:  "#f6f7ee",
   100: "#e8eccc",
   200: "#d4da9e",
+  300: "#bfc87a",
   400: "#a8b44e",
   600: "#6b7a1f",
   700: "#536015",
@@ -67,14 +69,14 @@ function useResize(
 ) {
   const [width, setWidth] = useState(initial);
   const dragging = useRef(false);
-  const startX = useRef(0);
-  const startW = useRef(0);
+  const startX   = useRef(0);
+  const startW   = useRef(0);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     dragging.current = true;
-    startX.current = e.clientX;
-    startW.current = width;
-    document.body.style.cursor = "col-resize";
+    startX.current   = e.clientX;
+    startW.current   = width;
+    document.body.style.cursor     = "col-resize";
     document.body.style.userSelect = "none";
   }, [width]);
 
@@ -87,15 +89,15 @@ function useResize(
       setWidth(Math.min(max, Math.max(min, startW.current + delta)));
     }
     function onUp() {
-      dragging.current = false;
-      document.body.style.cursor = "";
+      dragging.current               = false;
+      document.body.style.cursor     = "";
       document.body.style.userSelect = "";
     }
     window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("mouseup",   onUp);
     return () => {
       window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("mouseup",   onUp);
     };
   }, [direction, max, min]);
 
@@ -110,15 +112,15 @@ function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => voi
       onMouseDown={onMouseDown}
       role="separator"
       aria-label="Resize panel"
-      style={{ backgroundColor: "transparent", transition: "background-color 0.15s" }}
-      className="w-1 cursor-col-resize hover:bg-olive-200 flex-shrink-0"
+      className="w-1 cursor-col-resize flex-shrink-0"
       onMouseEnter={e => (e.currentTarget.style.backgroundColor = olive[200])}
       onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}
+      style={{ backgroundColor: "transparent", transition: "background-color 0.15s" }}
     />
   );
 }
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Avatar ───────────────────────────────────────────────────────────────────
 
 function Avatar({ role }: { role: Role }) {
   if (role === "agent") {
@@ -138,23 +140,359 @@ function Avatar({ role }: { role: Role }) {
   );
 }
 
-function ChatBubble({ message }: { message: Message }) {
+// ─── SparkBar ─────────────────────────────────────────────────────────────────
+
+function SparkBar({ values, dates }: { values: number[]; dates?: string[] }) {
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values);
+
+  // Y-axis labels — show max, mid, min
+  const mid = Math.round((max + min) / 2);
+
+  // Extract unique months from dates for x-axis labels
+  const monthLabels: { index: number; label: string }[] = [];
+  if (dates) {
+    let lastMonth = "";
+    dates.forEach((d, i) => {
+      const month = new Date(d).toLocaleString("default", { month: "short" });
+      if (month !== lastMonth) {
+        monthLabels.push({ index: i, label: month });
+        lastMonth = month;
+      }
+    });
+  }
+
   return (
-    <div className={`flex items-start gap-2 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
-      <Avatar role={message.role} />
-      <div
-        className="max-w-[78%] rounded-2xl px-3 py-2 text-sm leading-relaxed"
-        style={
-          message.role === "user"
-            ? { backgroundColor: olive[100], color: olive[800], borderBottomRightRadius: 4 }
-            : { backgroundColor: "#f5f5f4", color: "#292524", borderBottomLeftRadius: 4 }
-        }
-      >
-        {message.text}
+    <div className="flex gap-1.5">
+      {/* Y-axis */}
+      <div className="flex flex-col justify-between items-end pb-3" style={{ minWidth: 24 }}>
+        <span className="text-[9px] text-stone-400">{max}</span>
+        <span className="text-[9px] text-stone-400">{mid}</span>
+        <span className="text-[9px] text-stone-400">{min}</span>
+      </div>
+
+      {/* Chart area */}
+      <div className="flex-1 flex flex-col gap-1">
+        <div className="flex items-end gap-0.5 h-10">
+          {values.map((v, i) => (
+            <div
+              key={i}
+              className="flex-1 rounded-sm"
+              style={{
+                height:          `${Math.max(4, (v / max) * 40)}px`,
+                backgroundColor: i === values.length - 1 ? olive[600] : olive[200],
+              }}
+            />
+          ))}
+        </div>
+        {/* Month labels */}
+        {monthLabels.length > 0 && (
+          <div className="relative h-3">
+            {monthLabels.map(({ index, label }) => (
+              <span
+                key={label}
+                className="absolute text-[9px] text-stone-400"
+                style={{ left: `${(index / values.length) * 100}%` }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// ─── TrendCard ────────────────────────────────────────────────────────────────
+
+function TrendCard({ trend }: { trend: TrendResult }) {
+  const counts   = trend.weekly_counts ?? [];
+  const latest   = counts[counts.length - 1]  ?? 0;
+  const previous = counts[counts.length - 2]  ?? latest;
+  const change   = previous > 0
+    ? Math.round(((latest - previous) / previous) * 100)
+    : 0;
+
+  return (
+    <div
+      className="rounded-xl border p-3 text-xs"
+      style={{ borderColor: olive[200], backgroundColor: olive[50] }}
+    >
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div>
+          <p className="font-semibold text-sm capitalize" style={{ color: olive[800] }}>
+            {trend.keyword}
+          </p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            {trend.is_trending && (
+              <span
+                className="rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                style={{ backgroundColor: olive[100], color: olive[700] }}
+              >
+                Trending now
+              </span>
+            )}
+            {trend.prediction && (
+              <span className="text-[10px] text-stone-400 capitalize">
+                {trend.prediction}
+              </span>
+            )}
+          </div>
+        </div>
+        {change !== 0 && (
+          <span
+            className="rounded-full px-2 py-0.5 text-[10px] font-semibold flex-shrink-0"
+            style={{
+              backgroundColor: change > 0 ? "#dcfce7" : "#fee2e2",
+              color:           change > 0 ? "#15803d" : "#b91c1c",
+            }}
+          >
+            {change > 0 ? "▲" : "▼"} {Math.abs(change)}%
+          </span>
+        )}
+      </div>
+
+      {/* Spark chart with month labels */}
+      {counts.length > 0 && (
+        <SparkBar values={counts} dates={trend.dates} />
+      )}
+
+      {/* Top related queries */}
+      {trend.top && trend.top.length > 0 && (
+        <div className="mt-3 pt-2 border-t" style={{ borderColor: olive[100] }}>
+          <p className="text-[10px] uppercase tracking-widest mb-1.5"
+            style={{ color: olive[600] }}>
+            Top related searches
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {trend.top.map((q, i) => (
+              <div
+                key={i}
+                className="flex items-center justify-between gap-2 rounded px-1 py-0.5"
+                style={q.value >= 50 ? { backgroundColor: olive[50] } : {}}
+              >
+                <span
+                  className="text-[11px] truncate capitalize"
+                  style={{ color: q.value >= 50 ? olive[800] : "#78716c" }}
+                >
+                  {q.value >= 50 && (
+                    <span className="mr-1 text-[9px] font-bold" style={{ color: olive[600] }}>●</span>
+                  )}
+                  {q.query}
+                </span>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                  <div className="w-16 h-1.5 rounded-full bg-stone-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width:           `${q.value}%`,
+                        backgroundColor: q.value >= 50 ? olive[600] : olive[200],
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="text-[10px] w-6 text-right"
+                    style={{ color: q.value >= 50 ? olive[700] : "#a8a29e", fontWeight: q.value >= 50 ? 600 : 400 }}
+                  >
+                    {q.value}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] mt-1.5" style={{ color: olive[400] }}>
+            ● above 50 — strong search interest
+          </p>
+        </div>
+      )}
+
+      {/* Rising queries */}
+      {trend.rising && trend.rising.length > 0 && (
+        <div className="mt-3 pt-2 border-t" style={{ borderColor: olive[100] }}>
+          <p className="text-[10px] uppercase tracking-widest mb-1.5"
+            style={{ color: olive[600] }}>
+            Rising searches
+          </p>
+          <div className="flex flex-col gap-0.5">
+            {trend.rising.map((q, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 px-1 py-0.5">
+                <span className="text-[11px] truncate capitalize" style={{ color: olive[800] }}>
+                  ↑ {q.query}
+                </span>
+                <span
+                  className="text-[10px] font-semibold flex-shrink-0 rounded-full px-1.5 py-0.5"
+                  style={{ backgroundColor: olive[100], color: olive[700] }}
+                >
+                  +{q.value >= 1000 ? `${Math.round(q.value / 100) / 10}k` : q.value}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Demographics */}
+      {trend.demographics && (
+        <div
+          className="mt-2 pt-2 border-t grid grid-cols-2 gap-2"
+          style={{ borderColor: olive[100] }}
+        >
+          {Object.keys(trend.demographics.ages).length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: olive[600] }}>
+                Age
+              </p>
+              {Object.entries(trend.demographics.ages)
+                .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))
+                .slice(0, 3)
+                .map(([age, pct]) => (
+                  <div key={age} className="flex justify-between text-[10px] text-stone-500">
+                    <span>{age}</span>
+                    <span className="font-medium" style={{ color: olive[700] }}>{pct}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+          {Object.keys(trend.demographics.genders).length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: olive[600] }}>
+                Gender
+              </p>
+              {Object.entries(trend.demographics.genders)
+                .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))
+                .map(([gender, pct]) => (
+                  <div key={gender} className="flex justify-between text-[10px] text-stone-500">
+                    <span className="capitalize">{gender}</span>
+                    <span className="font-medium" style={{ color: olive[700] }}>{pct}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PlatformSelector ─────────────────────────────────────────────────────────
+
+function PlatformSelector({
+  onSelect,
+}: {
+  onSelect: (platform: TrendPlatform) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 mt-1">
+      {PLATFORM_OPTIONS.map((option) => (
+        <button
+          key={option.id}
+          onClick={() => option.available && onSelect(option.id)}
+          disabled={!option.available}
+          className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition"
+          style={{
+            borderColor:     option.available ? olive[300] : "#e7e5e4",
+            backgroundColor: option.available ? "#fff"     : "#fafaf9",
+            opacity:         option.available ? 1 : 0.5,
+            cursor:          option.available ? "pointer" : "not-allowed",
+          }}
+          onMouseEnter={e => {
+            if (option.available)
+              (e.currentTarget as HTMLElement).style.backgroundColor = olive[50];
+          }}
+          onMouseLeave={e => {
+            if (option.available)
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#fff";
+          }}
+        >
+          {/* Icon */}
+          <div
+            className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
+            style={{ backgroundColor: olive[100], color: olive[700] }}
+          >
+            {option.id === "google" ? "G" : "P"}
+          </div>
+
+          {/* Label */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-stone-800">{option.label}</p>
+              {!option.available && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[9px] font-medium"
+                  style={{ backgroundColor: olive[50], color: olive[600] }}
+                >
+                  Pending approval
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-stone-400 mt-0.5">{option.description}</p>
+          </div>
+
+          {/* Arrow */}
+          {option.available && (
+            <svg className="h-4 w-4 flex-shrink-0 mt-1 text-stone-300" fill="none"
+              stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9 5l7 7-7 7" />
+            </svg>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── ChatBubble ───────────────────────────────────────────────────────────────
+
+function ChatBubble({
+  message,
+  onPlatformSelect,
+}: {
+  message:          Message;
+  onPlatformSelect?: (platform: TrendPlatform) => void;
+}) {
+  return (
+    <div className={`flex items-start gap-2 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
+      <Avatar role={message.role} />
+      <div className="flex flex-col gap-2 min-w-0 flex-1 max-w-[85%]">
+
+        {/* Text bubble */}
+        <div
+          className="rounded-2xl px-3 py-2 text-sm leading-relaxed"
+          style={
+            message.role === "user"
+              ? { backgroundColor: olive[100], color: olive[800], borderBottomRightRadius: 4 }
+              : { backgroundColor: "#f5f5f4", color: "#292524", borderBottomLeftRadius: 4 }
+          }
+        >
+          {message.text}
+        </div>
+
+        {/* Platform selector */}
+        {message.awaitingPlatform && onPlatformSelect && (
+          <PlatformSelector onSelect={onPlatformSelect} />
+        )}
+
+        {/* Trend cards */}
+        {message.role === "agent" && message.trends && message.trends.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[10px] uppercase tracking-widest px-1"
+              style={{ color: olive[600] }}>
+              {message.platform === "pinterest" ? "Pinterest trends" : "Google trends"}
+            </p>
+            {message.trends.map((trend, i) => (
+              <TrendCard key={i} trend={trend} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── TypingIndicator ──────────────────────────────────────────────────────────
 
 function TypingIndicator() {
   return (
@@ -169,18 +507,19 @@ function TypingIndicator() {
   );
 }
 
+// ─── ProductCard ──────────────────────────────────────────────────────────────
+
 function ProductCard({ product }: { product: Product }) {
   return (
     <div className="rounded-xl border border-stone-100 bg-white p-3">
       {product.imageUrl && (
-        // with this
-          <Image
-            src={product.imageUrl}
-            alt={product.name}
-            width={300}
-            height={128}
-            className="mb-2 h-32 w-full rounded-lg object-cover"
-          />
+        <Image
+          src={product.imageUrl}
+          alt={product.name}
+          width={300}
+          height={128}
+          className="mb-2 h-32 w-full rounded-lg object-cover"
+        />
       )}
       <p className="text-[10px] uppercase tracking-widest text-stone-400">
         {product.category}
@@ -194,8 +533,8 @@ function ProductCard({ product }: { product: Product }) {
           className="rounded-full px-2 py-0.5 text-[10px] font-medium"
           style={
             product.inStock
-              ? { backgroundColor: olive[50], color: olive[700] }
-              : { backgroundColor: "#fef2f2", color: "#b91c1c" }
+              ? { backgroundColor: olive[50],  color: olive[700] }
+              : { backgroundColor: "#fef2f2", color: "#b91c1c"  }
           }
         >
           {product.inStock ? "In stock" : "Out of stock"}
@@ -204,6 +543,8 @@ function ProductCard({ product }: { product: Product }) {
     </div>
   );
 }
+
+// ─── EmptyResults ─────────────────────────────────────────────────────────────
 
 function EmptyResults() {
   return (
@@ -219,32 +560,35 @@ function EmptyResults() {
   );
 }
 
-// ─── Main page ───────────────────────────────────────────────────────────────
+// ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
   const [sessions, setSessions] = useState<ChatSession[]>([
     {
-      id: generateId(),
-      title: "New chat",
+      id:       generateId(),
+      title:    "New chat",
       messages: [makeWelcomeMessage()],
-      results: [],
+      results:  [],
     },
   ]);
-  const [activeId, setActiveId] = useState<string>(sessions[0]!.id);
-  const [input, setInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
+  const [activeId,      setActiveId]      = useState<string>(sessions[0]!.id);
+  const [input,         setInput]         = useState("");
+  const [isTyping,      setIsTyping]      = useState(false);
+  const [uploadedImage, setUploadedImage] = useState<{
+    name: string; base64: string; preview: string;
+  } | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploadedImage, setUploadedImage] = useState<{ name: string; base64: string; preview: string } | null>(null);
+  const textareaRef    = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef   = useRef<HTMLInputElement>(null);
 
-  // Three resizable panels
   const left  = useResize(200, 160, 320, "right");
   const right = useResize(260, 180, 400, "left");
 
   const activeSession = sessions.find((s) => s.id === activeId)!;
 
+  // Auto-scroll to latest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeSession.messages, isTyping]);
@@ -253,10 +597,10 @@ export default function HomePage() {
 
   function newChat() {
     const session: ChatSession = {
-      id: generateId(),
-      title: "New chat",
+      id:       generateId(),
+      title:    "New chat",
       messages: [makeWelcomeMessage()],
-      results: [],
+      results:  [],
     };
     setSessions((prev) => [session, ...prev]);
     setActiveId(session.id);
@@ -277,13 +621,12 @@ export default function HomePage() {
     reader.onload = () => {
       const result = reader.result as string;
       setUploadedImage({
-        name: file.name,
-        base64: result.split(",")[1] ?? "",
+        name:    file.name,
+        base64:  result.split(",")[1] ?? "",
         preview: result,
       });
     };
     reader.readAsDataURL(file);
-    // Reset input so same file can be re-selected
     e.target.value = "";
   }
 
@@ -293,17 +636,43 @@ export default function HomePage() {
 
   // ── Send message ──────────────────────────────────────────────────────────
 
-  async function sendMessage() {
-    const text = input.trim();
+  async function sendMessage(platform?: TrendPlatform) {
+    const text = (pendingMessage ?? input).trim();
     if (!text || isTyping) return;
 
-    const isFirst = activeSession.messages.length === 1;
+    // If this is a trend query and no platform chosen yet — show selector
+    if (!platform && needsPlatformSelection(text)) {
+      setPendingMessage(text);
+      setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "64px";
+      // Add the user message + selector prompt to the chat
+      const userMessage: Message = { role: "user", text };
+      updateSession(activeId, {
+        messages: [
+          ...activeSession.messages,
+          userMessage,
+          {
+            role: "agent",
+            text: "Which platform would you like to get trend data from?",
+            awaitingPlatform: true,
+          },
+        ],
+      });
+      return;
+    }
+
+    // Clear pending state
+    setPendingMessage(null);
+
+    const isFirst  = activeSession.messages.filter(m => m.role === "user").length === 0;
     const newTitle = isFirst
       ? text.length > 30 ? text.slice(0, 30) + "…" : text
       : activeSession.title;
 
-    const userMessage: Message = { role: "user", text };
-    const updatedMessages = [...activeSession.messages, userMessage];
+    const userMessage: Message    = { role: "user", text };
+    // Remove any awaitingPlatform message before adding new ones
+    const cleanMessages = activeSession.messages.filter(m => !m.awaitingPlatform);
+    const updatedMessages = [...cleanMessages, userMessage];
 
     updateSession(activeId, { messages: updatedMessages, title: newTitle });
     setInput("");
@@ -312,29 +681,37 @@ export default function HomePage() {
     setIsTyping(true);
 
     try {
-      const response = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          history: updatedMessages.map((m) => ({ role: m.role, text: m.text })),
-          ...(uploadedImage && { image_base64: uploadedImage.base64 }),
-        }),
+      // Single API call — /chat handles intent detection, trends, and reply
+      const chatData = await sendChatMessage({
+        message:  text,
+        history:  updatedMessages.map((m) => ({ role: m.role, text: m.text })),
+        platform,
+        ...(uploadedImage && { image_base64: uploadedImage.base64 }),
       });
 
-      if (!response.ok) throw new Error(`API error: ${response.status}`);
+      if (!chatData) throw new Error("Chat API returned null");
 
-      const data = await response.json() as { reply: string; products?: Product[] };
+      const trendResults = chatData.trends ?? [];
+      const agentMessage: Message = {
+        role:    "agent",
+        text:    chatData.reply,
+        trends:  trendResults.length > 0 ? trendResults : undefined,
+        platform,
+      };
 
       updateSession(activeId, {
-        messages: [...updatedMessages, { role: "agent", text: data.reply }],
-        results: data.products ?? activeSession.results,
+        messages: [...updatedMessages, agentMessage],
+        results:  chatData.products ?? activeSession.results,
       });
+
     } catch {
       updateSession(activeId, {
         messages: [
           ...updatedMessages,
-          { role: "agent", text: "Sorry, I couldn't reach the server. Please check that the API is running and try again." },
+          {
+            role: "agent",
+            text: "Sorry, I couldn't reach the server. Please check that the API is running and try again.",
+          },
         ],
       });
     } finally {
@@ -345,7 +722,7 @@ export default function HomePage() {
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void sendMessage();
+      void sendMessage(undefined);
     }
   }
 
@@ -431,6 +808,7 @@ export default function HomePage() {
 
       {/* ── Main panel ── */}
       <main className="flex min-w-0 flex-1 flex-col">
+
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-stone-200 bg-white px-5 py-3">
           <div
@@ -451,9 +829,13 @@ export default function HomePage() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          <div className="mx-auto flex max-w-2xl flex-col gap-4">
+          <div className="mx-auto flex max-w-2xl flex-col gap-4 pb-4">
             {activeSession.messages.map((msg, i) => (
-              <ChatBubble key={i} message={msg} />
+              <ChatBubble
+                key={i}
+                message={msg}
+                onPlatformSelect={(platform) => void sendMessage(platform)}
+              />
             ))}
             {isTyping && <TypingIndicator />}
             <div ref={messagesEndRef} />
@@ -467,13 +849,12 @@ export default function HomePage() {
             {/* Image preview */}
             {uploadedImage && (
               <div className="mb-2 flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-              <Image
-                src={uploadedImage.preview}
-                alt="Upload preview"
-                width={40}
-                height={40}
-                className="h-10 w-10 rounded-lg object-cover flex-shrink-0"
-              />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={uploadedImage.preview}
+                  alt="Upload preview"
+                  className="h-10 w-10 rounded-lg object-cover flex-shrink-0"
+                />
                 <span className="flex-1 truncate text-xs text-stone-500">{uploadedImage.name}</span>
                 <button
                   onClick={clearImage}
@@ -505,7 +886,9 @@ export default function HomePage() {
                 aria-label="Upload image"
                 title="Upload image"
                 className="flex h-14 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 text-stone-400 transition hover:border-stone-300 hover:text-stone-600"
-                style={uploadedImage ? { borderColor: olive[400], color: olive[600], backgroundColor: olive[50] } : {}}
+                style={uploadedImage
+                  ? { borderColor: olive[400], color: olive[600], backgroundColor: olive[50] }
+                  : {}}
               >
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
@@ -513,6 +896,7 @@ export default function HomePage() {
                 </svg>
               </button>
 
+              {/* Textarea */}
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -523,18 +907,20 @@ export default function HomePage() {
                 className="flex-1 resize-none rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-base text-stone-800 placeholder-stone-400 outline-none transition leading-relaxed"
                 style={{ height: "64px", maxHeight: "160px" }}
                 onFocus={e => {
-                  e.target.style.borderColor = olive[400];
-                  e.target.style.backgroundColor = "#fff";
-                  e.target.style.boxShadow = `0 0 0 3px ${olive[100]}`;
+                  e.target.style.borderColor       = olive[400];
+                  e.target.style.backgroundColor   = "#fff";
+                  e.target.style.boxShadow         = `0 0 0 3px ${olive[100]}`;
                 }}
                 onBlur={e => {
-                  e.target.style.borderColor = "";
-                  e.target.style.backgroundColor = "";
-                  e.target.style.boxShadow = "";
+                  e.target.style.borderColor       = "";
+                  e.target.style.backgroundColor   = "";
+                  e.target.style.boxShadow         = "";
                 }}
               />
+
+              {/* Send button */}
               <button
-                onClick={() => void sendMessage()}
+                onClick={() => void sendMessage(undefined)}
                 disabled={(!input.trim() && !uploadedImage) || isTyping}
                 aria-label="Send message"
                 className="flex h-14 w-11 flex-shrink-0 items-center justify-center rounded-2xl text-white transition disabled:cursor-not-allowed disabled:opacity-40"
