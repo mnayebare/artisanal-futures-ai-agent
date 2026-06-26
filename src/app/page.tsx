@@ -4,9 +4,15 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import {
   sendChatMessage,
-  isTrendQuery,
   needsPlatformSelection,
   PLATFORM_OPTIONS,
+  fetchSessions,
+  createSession,
+  fetchSessionMessages,
+  saveSessionMessages,
+  deleteSessionFromDB,
+  submitFeedback,
+  type StoredSession,
   type TrendPlatform,
   type TrendResult,
   type Product,
@@ -22,13 +28,16 @@ interface Message {
   trends?:           TrendResult[];
   platform?:         TrendPlatform;
   awaitingPlatform?: boolean;
+  reasoning?:        string;
+  feedback?:         "positive" | "negative" | null;
 }
 
 interface ChatSession {
-  id:       string;
-  title:    string;
-  messages: Message[];
-  results:  Product[];
+  id:        string;
+  title:     string;
+  messages:  Message[];
+  results:   Product[];
+  reasoning: string | null;
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -258,120 +267,6 @@ function TrendCard({ trend }: { trend: TrendResult }) {
       {counts.length > 0 && (
         <SparkBar values={counts} dates={trend.dates} />
       )}
-
-      {/* Top related queries */}
-      {trend.top && trend.top.length > 0 && (
-        <div className="mt-3 pt-2 border-t" style={{ borderColor: olive[100] }}>
-          <p className="text-[10px] uppercase tracking-widest mb-1.5"
-            style={{ color: olive[600] }}>
-            Top related searches
-          </p>
-          <div className="flex flex-col gap-0.5">
-            {trend.top.map((q, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between gap-2 rounded px-1 py-0.5"
-                style={q.value >= 50 ? { backgroundColor: olive[50] } : {}}
-              >
-                <span
-                  className="text-[11px] truncate capitalize"
-                  style={{ color: q.value >= 50 ? olive[800] : "#78716c" }}
-                >
-                  {q.value >= 50 && (
-                    <span className="mr-1 text-[9px] font-bold" style={{ color: olive[600] }}>●</span>
-                  )}
-                  {q.query}
-                </span>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <div className="w-16 h-1.5 rounded-full bg-stone-100 overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width:           `${q.value}%`,
-                        backgroundColor: q.value >= 50 ? olive[600] : olive[200],
-                      }}
-                    />
-                  </div>
-                  <span
-                    className="text-[10px] w-6 text-right"
-                    style={{ color: q.value >= 50 ? olive[700] : "#a8a29e", fontWeight: q.value >= 50 ? 600 : 400 }}
-                  >
-                    {q.value}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="text-[9px] mt-1.5" style={{ color: olive[400] }}>
-            ● above 50 — strong search interest
-          </p>
-        </div>
-      )}
-
-      {/* Rising queries */}
-      {trend.rising && trend.rising.length > 0 && (
-        <div className="mt-3 pt-2 border-t" style={{ borderColor: olive[100] }}>
-          <p className="text-[10px] uppercase tracking-widest mb-1.5"
-            style={{ color: olive[600] }}>
-            Rising searches
-          </p>
-          <div className="flex flex-col gap-0.5">
-            {trend.rising.map((q, i) => (
-              <div key={i} className="flex items-center justify-between gap-2 px-1 py-0.5">
-                <span className="text-[11px] truncate capitalize" style={{ color: olive[800] }}>
-                  ↑ {q.query}
-                </span>
-                <span
-                  className="text-[10px] font-semibold flex-shrink-0 rounded-full px-1.5 py-0.5"
-                  style={{ backgroundColor: olive[100], color: olive[700] }}
-                >
-                  +{q.value >= 1000 ? `${Math.round(q.value / 100) / 10}k` : q.value}%
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Demographics */}
-      {trend.demographics && (
-        <div
-          className="mt-2 pt-2 border-t grid grid-cols-2 gap-2"
-          style={{ borderColor: olive[100] }}
-        >
-          {Object.keys(trend.demographics.ages).length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: olive[600] }}>
-                Age
-              </p>
-              {Object.entries(trend.demographics.ages)
-                .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))
-                .slice(0, 3)
-                .map(([age, pct]) => (
-                  <div key={age} className="flex justify-between text-[10px] text-stone-500">
-                    <span>{age}</span>
-                    <span className="font-medium" style={{ color: olive[700] }}>{pct}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-          {Object.keys(trend.demographics.genders).length > 0 && (
-            <div>
-              <p className="text-[10px] uppercase tracking-widest mb-1" style={{ color: olive[600] }}>
-                Gender
-              </p>
-              {Object.entries(trend.demographics.genders)
-                .sort((a, b) => parseFloat(b[1]) - parseFloat(a[1]))
-                .map(([gender, pct]) => (
-                  <div key={gender} className="flex justify-between text-[10px] text-stone-500">
-                    <span className="capitalize">{gender}</span>
-                    <span className="font-medium" style={{ color: olive[700] }}>{pct}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -448,11 +343,24 @@ function PlatformSelector({
 
 function ChatBubble({
   message,
+  messageIdx,
   onPlatformSelect,
+  onFeedback,
 }: {
   message:          Message;
+  messageIdx:       number;
   onPlatformSelect?: (platform: TrendPlatform) => void;
+  onFeedback?:      (idx: number, type: "positive" | "negative") => void;
 }) {
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    void navigator.clipboard.writeText(message.text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   return (
     <div className={`flex items-start gap-2 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
       <Avatar role={message.role} />
@@ -469,6 +377,62 @@ function ChatBubble({
         >
           {message.text}
         </div>
+
+        {/* Agent action buttons — copy + feedback */}
+        {message.role === "agent" && !message.awaitingPlatform && (
+          <div className="flex items-center gap-1 px-1">
+            {/* Copy */}
+            <button
+              onClick={handleCopy}
+              title="Copy response"
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] text-stone-400 transition hover:bg-stone-100 hover:text-stone-600"
+            >
+              {copied ? (
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              )}
+              {copied ? "Copied" : "Copy"}
+            </button>
+
+            {/* Thumbs up */}
+            <button
+              onClick={() => onFeedback?.(messageIdx, "positive")}
+              title="Good response"
+              className="rounded-lg p-1.5 transition hover:bg-stone-100"
+              style={{
+                color: message.feedback === "positive" ? olive[600] : "#a8a29e",
+              }}
+            >
+              <svg className="h-4 w-4" fill={message.feedback === "positive" ? "currentColor" : "none"}
+                stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+              </svg>
+            </button>
+
+            {/* Thumbs down */}
+            <button
+              onClick={() => onFeedback?.(messageIdx, "negative")}
+              title="Poor response"
+              className="rounded-lg p-1.5 transition hover:bg-stone-100"
+              style={{
+                color: message.feedback === "negative" ? "#b91c1c" : "#a8a29e",
+              }}
+            >
+              <svg className="h-4 w-4" fill={message.feedback === "negative" ? "currentColor" : "none"}
+                stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.095c.5 0 .905-.405.905-.905 0-.714.211-1.412.608-2.006L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {/* Platform selector */}
         {message.awaitingPlatform && onPlatformSelect && (
@@ -565,10 +529,11 @@ function EmptyResults() {
 export default function HomePage() {
   const [sessions, setSessions] = useState<ChatSession[]>([
     {
-      id:       generateId(),
-      title:    "New chat",
-      messages: [makeWelcomeMessage()],
-      results:  [],
+      id:        generateId(),
+      title:     "New chat",
+      messages:  [makeWelcomeMessage()],
+      results:   [],
+      reasoning: null,
     },
   ]);
   const [activeId,      setActiveId]      = useState<string>(sessions[0]!.id);
@@ -577,14 +542,18 @@ export default function HomePage() {
   const [uploadedImage, setUploadedImage] = useState<{
     name: string; base64: string; preview: string;
   } | null>(null);
-  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  const [pendingMessage,   setPendingMessage]   = useState<string | null>(null);
+  const [deleteSessionId,  setDeleteSessionId]  = useState<string | null>(null);
+  const [menuSessionId,    setMenuSessionId]    = useState<string | null>(null);
+  const [dbSessionId,      setDbSessionId]      = useState<string | null>(null);
+  const [chatHistory,      setChatHistory]      = useState<StoredSession[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef    = useRef<HTMLTextAreaElement>(null);
   const fileInputRef   = useRef<HTMLInputElement>(null);
 
   const left  = useResize(200, 160, 320, "right");
-  const right = useResize(260, 180, 400, "left");
+  const right = useResize(420, 320, 580, "left");
 
   const activeSession = sessions.find((s) => s.id === activeId)!;
 
@@ -593,23 +562,71 @@ export default function HomePage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeSession.messages, isTyping]);
 
+  // Load chat history from DB on mount
+  useEffect(() => {
+    void fetchSessions().then(data => {
+      console.log("[history] fetched sessions:", JSON.stringify(data, null, 2));
+      setChatHistory(data);
+    });
+  }, []);
+
   // ── Session helpers ───────────────────────────────────────────────────────
 
   function newChat() {
     const session: ChatSession = {
-      id:       generateId(),
-      title:    "New chat",
-      messages: [makeWelcomeMessage()],
-      results:  [],
+      id:        generateId(),
+      title:     "New chat",
+      messages:  [makeWelcomeMessage()],
+      results:   [],
+      reasoning: null,
     };
     setSessions((prev) => [session, ...prev]);
     setActiveId(session.id);
+    setInput("");
+    setUploadedImage(null);
+    setPendingMessage(null);
+    setIsTyping(false);
+    setDbSessionId(null); // will be created on first message
+    if (textareaRef.current) {
+      textareaRef.current.value        = "";
+      textareaRef.current.style.height = "64px";
+    }
   }
 
   function updateSession(id: string, patch: Partial<ChatSession>) {
     setSessions((prev) =>
       prev.map((s) => (s.id === id ? { ...s, ...patch } : s))
     );
+  }
+
+  function deleteSession(id: string) {
+    const remaining = sessions.filter((s) => s.id !== id);
+    if (remaining.length === 0) {
+      const fresh: ChatSession = {
+        id:        generateId(),
+        title:     "New chat",
+        messages:  [makeWelcomeMessage()],
+        results:   [],
+        reasoning: null,
+      };
+      setSessions([fresh]);
+      setActiveId(fresh.id);
+    } else {
+      setSessions(remaining);
+      if (id === activeId) setActiveId(remaining[0]!.id);
+    }
+    setDeleteSessionId(null);
+    setMenuSessionId(null);
+
+    // Delete from DB and refresh history
+    if (dbSessionId) {
+      void deleteSessionFromDB(dbSessionId).then(() =>
+        fetchSessions().then(setChatHistory)
+      );
+      setDbSessionId(null);
+    }
+    // Also remove from chatHistory if it's a persisted session
+    setChatHistory(prev => prev.filter(s => s.id !== id));
   }
 
   // ── Image upload ──────────────────────────────────────────────────────────
@@ -664,15 +681,22 @@ export default function HomePage() {
     // Clear pending state
     setPendingMessage(null);
 
-    const isFirst  = activeSession.messages.filter(m => m.role === "user").length === 0;
+    // Remove awaitingPlatform message — user message is already in chat from first call
+    const cleanMessages   = activeSession.messages.filter(m => !m.awaitingPlatform);
+    // Only add user message if it's not already the last user message in the chat
+    const lastUserMsg     = [...cleanMessages].reverse().find(m => m.role === "user");
+    const alreadyAdded    = lastUserMsg?.text === text;
+    const updatedMessages = alreadyAdded
+      ? cleanMessages
+      : [...cleanMessages, { role: "user" as const, text }];
+
+    const isFirst  = activeSession.messages.filter(m => m.role === "user").length === 0
+                  && !alreadyAdded;
     const newTitle = isFirst
       ? text.length > 30 ? text.slice(0, 30) + "…" : text
-      : activeSession.title;
-
-    const userMessage: Message    = { role: "user", text };
-    // Remove any awaitingPlatform message before adding new ones
-    const cleanMessages = activeSession.messages.filter(m => !m.awaitingPlatform);
-    const updatedMessages = [...cleanMessages, userMessage];
+      : activeSession.title === "New chat" && text.length > 0
+        ? text.length > 30 ? text.slice(0, 30) + "…" : text
+        : activeSession.title;
 
     updateSession(activeId, { messages: updatedMessages, title: newTitle });
     setInput("");
@@ -693,16 +717,42 @@ export default function HomePage() {
 
       const trendResults = chatData.trends ?? [];
       const agentMessage: Message = {
-        role:    "agent",
-        text:    chatData.reply,
-        trends:  trendResults.length > 0 ? trendResults : undefined,
+        role:      "agent",
+        text:      chatData.reply,
+        trends:    trendResults.length > 0 ? trendResults : undefined,
         platform,
+        reasoning: chatData.reasoning,
+        feedback:  null,
       };
 
+      // Use server-generated title if available, otherwise keep current
+      const finalTitle = chatData.suggested_title ?? newTitle;
+
       updateSession(activeId, {
-        messages: [...updatedMessages, agentMessage],
-        results:  chatData.products ?? activeSession.results,
+        messages:  [...updatedMessages, agentMessage],
+        results:   chatData.products ?? activeSession.results,
+        title:     finalTitle,
+        reasoning: chatData.reasoning ?? activeSession.reasoning,
       });
+
+      // Persist to DB
+      const sid = dbSessionId ?? await createSession(finalTitle);
+      if (sid) {
+        setDbSessionId(sid);
+        await saveSessionMessages(
+          sid,
+          finalTitle,
+          [...updatedMessages, agentMessage].map(m => ({
+            role:     m.role,
+            text:     m.text,
+            metadata: m.trends || m.platform ? {
+              trends:   m.trends,
+              platform: m.platform,
+            } : undefined,
+          }))
+        );
+        void fetchSessions().then(setChatHistory);
+      }
 
     } catch {
       updateSession(activeId, {
@@ -716,6 +766,26 @@ export default function HomePage() {
       });
     } finally {
       setIsTyping(false);
+    }
+  }
+
+  function handleFeedback(messageIdx: number, type: "positive" | "negative") {
+    // Update message feedback state
+    const updatedMessages = activeSession.messages.map((m, i) =>
+      i === messageIdx ? { ...m, feedback: type } : m
+    );
+    updateSession(activeId, { messages: updatedMessages });
+
+    // Save to DB
+    if (dbSessionId) {
+      const msg = activeSession.messages[messageIdx];
+      void submitFeedback({
+        session_id:  dbSessionId,
+        message_idx: messageIdx,
+        type,
+        context:     msg?.text,
+        reasoning:   activeSession.reasoning ?? undefined,
+      });
     }
   }
 
@@ -775,15 +845,10 @@ export default function HomePage() {
         <div className="flex-1 overflow-y-auto px-3 py-3">
           <p className="mb-2 px-1 text-[10px] uppercase tracking-widest text-stone-400">Recent</p>
           {sessions.map((session) => (
-            <button
+            <div
               key={session.id}
-              onClick={() => setActiveId(session.id)}
-              className="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition"
-              style={
-                session.id === activeId
-                  ? { backgroundColor: olive[50], color: olive[800], fontWeight: 500 }
-                  : { color: "#78716c" }
-              }
+              className="group relative mb-0.5 flex items-center rounded-lg transition"
+              style={session.id === activeId ? { backgroundColor: olive[50] } : {}}
               onMouseEnter={e => {
                 if (session.id !== activeId)
                   (e.currentTarget as HTMLElement).style.backgroundColor = "#fff";
@@ -793,13 +858,150 @@ export default function HomePage() {
                   (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
               }}
             >
-              <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <span className="truncate">{session.title}</span>
-            </button>
+              <button
+                onClick={() => { setActiveId(session.id); setMenuSessionId(null); }}
+                className="flex flex-1 min-w-0 items-center gap-2 px-2 py-2 text-left text-xs"
+                style={{ color: session.id === activeId ? olive[800] : "#78716c",
+                         fontWeight: session.id === activeId ? 500 : 400 }}
+              >
+                <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <span className="truncate">{session.title}</span>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuSessionId(menuSessionId === session.id ? null : session.id);
+                }}
+                className="mr-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ color: "#a8a29e" }}
+                aria-label="Session options"
+              >
+                <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                  <circle cx="5" cy="12" r="1.5" />
+                  <circle cx="12" cy="12" r="1.5" />
+                  <circle cx="19" cy="12" r="1.5" />
+                </svg>
+              </button>
+              {menuSessionId === session.id && (
+                <div className="absolute right-1 top-8 z-50 rounded-lg border border-stone-200 bg-white py-1 shadow-lg" style={{ minWidth: 110 }}>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteSessionId(session.id);
+                      setMenuSessionId(null);
+                    }}
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 transition"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
+
+          {/* ── DB Chat History ── */}
+          {chatHistory.length > 0 && (
+            <>
+              <p className="mb-2 mt-4 px-1 text-[10px] uppercase tracking-widest text-stone-400">
+                Chat history
+              </p>
+              {chatHistory.map((stored) => (
+                <div
+                  key={stored.id}
+                  className="group relative mb-0.5 flex items-center rounded-lg transition"
+                  style={activeId === stored.id ? { backgroundColor: olive[50] } : {}}
+                  onMouseEnter={e => {
+                    if (activeId !== stored.id)
+                      (e.currentTarget as HTMLElement).style.backgroundColor = "#fff";
+                  }}
+                  onMouseLeave={e => {
+                    if (activeId !== stored.id)
+                      (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                  }}
+                >
+                  <button
+                    onClick={async () => {
+                      const existing = sessions.find(s => s.id === stored.id);
+                      if (existing) {
+                        setActiveId(stored.id);
+                        setDbSessionId(stored.id);
+                        return;
+                      }
+                      const msgs = await fetchSessionMessages(stored.id);
+                      const session: ChatSession = {
+                        id:        stored.id,
+                        title:     stored.title,
+                        messages:  msgs.length > 0
+                          ? msgs.map(m => ({
+                              role:     m.role,
+                              text:     m.text,
+                              trends:   m.metadata?.trends as TrendResult[] | undefined,
+                              platform: m.metadata?.platform as TrendPlatform | undefined,
+                            }))
+                          : [makeWelcomeMessage()],
+                        results:   [],
+                        reasoning: null,
+                      };
+                      setSessions(prev => [session, ...prev.filter(s => s.id !== stored.id)]);
+                      setActiveId(stored.id);
+                      setDbSessionId(stored.id);
+                      setInput("");
+                      setUploadedImage(null);
+                      setPendingMessage(null);
+                      if (textareaRef.current) textareaRef.current.style.height = "64px";
+                    }}
+                    className="flex flex-1 min-w-0 flex-col px-2 py-2 text-left"
+                    style={{
+                      color:      activeId === stored.id ? olive[800] : "#78716c",
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span
+                        className="truncate text-xs"
+                        style={{ fontWeight: activeId === stored.id ? 500 : 400 }}
+                      >
+                        {stored.title}
+                      </span>
+                    </div>
+                    <p className="ml-5 text-[10px] text-stone-400">
+                      {stored.messageCount} message{stored.messageCount !== 1 ? "s" : ""} ·{" "}
+                      {new Date(stored.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </p>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteSessionFromDB(stored.id).then(() =>
+                        fetchSessions().then(setChatHistory)
+                      );
+                      setSessions(prev => prev.filter(s => s.id !== stored.id));
+                      if (activeId === stored.id) {
+                        const remaining = sessions.filter(s => s.id !== stored.id);
+                        setActiveId(remaining[0]?.id ?? generateId());
+                      }
+                    }}
+                    className="mr-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded opacity-0 group-hover:opacity-100 text-stone-300 hover:text-red-400 transition-opacity"
+                    aria-label="Delete from history"
+                  >
+                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </aside>
 
@@ -834,7 +1036,9 @@ export default function HomePage() {
               <ChatBubble
                 key={i}
                 message={msg}
+                messageIdx={i}
                 onPlatformSelect={(platform) => void sendMessage(platform)}
+                onFeedback={handleFeedback}
               />
             ))}
             {isTyping && <TypingIndicator />}
@@ -948,14 +1152,21 @@ export default function HomePage() {
         className="flex flex-shrink-0 flex-col border-l border-stone-200 bg-white"
         style={{ width: right.width }}
       >
+        {/* Header — shows Reasoning or Results depending on content */}
         <div className="flex items-center gap-2 border-b border-stone-200 px-4 py-3">
           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"
             style={{ color: olive[600] }}>
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+            {activeSession.reasoning
+              ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                  d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+            }
           </svg>
-          <p className="text-sm font-medium text-stone-700">Results</p>
-          {activeSession.results.length > 0 && (
+          <p className="text-sm font-medium text-stone-700">
+            {activeSession.reasoning ? "Reasoning" : "Results"}
+          </p>
+          {!activeSession.reasoning && activeSession.results.length > 0 && (
             <span
               className="ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold"
               style={{ backgroundColor: olive[100], color: olive[700] }}
@@ -965,16 +1176,151 @@ export default function HomePage() {
           )}
         </div>
 
-        <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-3">
-          {activeSession.results.length === 0 ? (
+        <div className="flex flex-1 flex-col overflow-y-auto p-4">
+          {activeSession.reasoning ? (
+            /* ── Reasoning view ── */
+            <div className="flex flex-col gap-4">
+              <div
+                className="rounded-xl border p-3"
+                style={{ borderColor: olive[200], backgroundColor: olive[50] }}
+              >
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-1.5">
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      style={{ color: olive[600] }}>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                        d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    <p className="text-[10px] uppercase tracking-widest font-medium"
+                      style={{ color: olive[700] }}>
+                      AI Analysis
+                    </p>
+                  </div>
+                  {/* Copy reasoning button */}
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => {
+                        void navigator.clipboard.writeText(activeSession.reasoning ?? "");
+                      }}
+                      title="Copy analysis"
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] text-stone-400 transition hover:bg-white hover:text-stone-600"
+                    >
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                      Copy
+                    </button>
+
+                    {/* Thumbs up */}
+                    <button
+                      onClick={() => {
+                        if (dbSessionId) {
+                          void submitFeedback({
+                            session_id:  dbSessionId,
+                            message_idx: -1,
+                            type:        "positive",
+                            context:     "reasoning",
+                            reasoning:   activeSession.reasoning ?? undefined,
+                          });
+                        }
+                      }}
+                      title="Helpful analysis"
+                      className="rounded-lg p-1.5 transition hover:bg-white"
+                      style={{ color: olive[400] }}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                      </svg>
+                    </button>
+
+                    {/* Thumbs down */}
+                    <button
+                      onClick={() => {
+                        if (dbSessionId) {
+                          void submitFeedback({
+                            session_id:  dbSessionId,
+                            message_idx: -1,
+                            type:        "negative",
+                            context:     "reasoning",
+                            reasoning:   activeSession.reasoning ?? undefined,
+                          });
+                        }
+                      }}
+                      title="Not helpful"
+                      className="rounded-lg p-1.5 transition hover:bg-white"
+                      style={{ color: "#a8a29e" }}
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                          d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.095c.5 0 .905-.405.905-.905 0-.714.211-1.412.608-2.006L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-stone-700 whitespace-pre-wrap">
+                  {activeSession.reasoning}
+                </p>
+              </div>
+            </div>
+          ) : activeSession.results.length === 0 ? (
+            /* ── Empty state ── */
             <EmptyResults />
           ) : (
-            activeSession.results.map((product) => (
-              <ProductCard key={product.id} product={product} />
-            ))
+            /* ── Product results ── */
+            <div className="flex flex-col gap-3">
+              {activeSession.results.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
           )}
         </div>
       </aside>
+
+      {/* ── Click outside to close menu ── */}
+      {menuSessionId && (
+        <div className="fixed inset-0 z-40" onClick={() => setMenuSessionId(null)} />
+      )}
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteSessionId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/20 backdrop-blur-sm"
+            onClick={() => setDeleteSessionId(null)}
+          />
+          <div className="relative z-10 w-72 rounded-2xl border border-stone-200 bg-white p-5 shadow-xl">
+            <div
+              className="mb-3 flex h-9 w-9 items-center justify-center rounded-full"
+              style={{ backgroundColor: "#fef2f2" }}
+            >
+              <svg className="h-4 w-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </div>
+            <p className="text-sm font-semibold text-stone-800">Delete chat?</p>
+            <p className="mt-1 text-xs text-stone-400">
+              {sessions.find(s => s.id === deleteSessionId)?.title ?? "This chat"} will be permanently removed.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setDeleteSessionId(null)}
+                className="flex-1 rounded-lg border border-stone-200 py-2 text-xs font-medium text-stone-600 transition hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => deleteSession(deleteSessionId)}
+                className="flex-1 rounded-lg bg-red-500 py-2 text-xs font-medium text-white transition hover:bg-red-600"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

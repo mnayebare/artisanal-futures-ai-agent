@@ -107,8 +107,12 @@ def build_payload(
     geo:       str = "US",
     category:  int = FASHION_CATEGORY,
 ) -> None:
-    """Build payload with jittered delay to avoid rate limiting."""
-    delay = random.uniform(2.0, 4.0)   # random delay 2–4 seconds
+    """
+    Build payload with jittered delay.
+    One call sets up context for both interest_over_time
+    and related_queries — no second request needed.
+    """
+    delay = random.uniform(2.0, 4.0)
     print(f"[pytrends] waiting {delay:.1f}s before request...")
     time.sleep(delay)
     pytrends.build_payload(
@@ -117,7 +121,8 @@ def build_payload(
         geo=geo,
         cat=category,
     )
-    time.sleep(random.uniform(1.0, 2.0))
+    # Small pause after payload — related_queries reuses the same token
+    time.sleep(random.uniform(0.5, 1.0))
 
 
 def interest_over_time(pytrends: TrendReq) -> pd.DataFrame:

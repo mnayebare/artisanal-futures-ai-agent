@@ -10,6 +10,9 @@ npx prisma migrate dev --name init    (migrates data from ORM)
 npx prisma generate - (builds the TypeScript client) 
 npx prisma db seed              - (adds data to the seed)
 npx prisma migrate reset - (to drop the development database)
+npx prisma migrate deploy - applies existing migrations to the remote/production database
+npx prisma db push - syncs your schema directly to the database without the need to migrate the files
+npx prisma studio - to view the data
 
 
 

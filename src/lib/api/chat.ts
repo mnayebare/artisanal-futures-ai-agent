@@ -29,9 +29,11 @@ export interface ChatRequest {
 }
 
 export interface ChatResponse {
-  reply:     string;
-  products?: Product[];
-  trends?:   TrendResult[];
+  reply:            string;
+  products?:        Product[];
+  trends?:          TrendResult[];
+  suggested_title?: string;
+  reasoning?:       string;
 }
 
 export interface RelatedQuery {

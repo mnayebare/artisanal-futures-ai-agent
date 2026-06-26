@@ -7,6 +7,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export * from "./chat";
-export * from "./pinterest";
-export * from "./trends";
+export * from "./feedback";
 export * from "./google";
+export * from "./pinterest";
+export * from "./sessions";
+export * from "./trends";

@@ -31,42 +31,45 @@ class ChatRequest(BaseModel):
     image_base64: str | None = None
 
 class ChatResponse(BaseModel):
-    reply:    str
-    intent:   str
-    source:   str
-    products: list[dict] | None = None
-    trends:   list[dict] | None = None
+    reply:           str
+    intent:          str
+    source:          str
+    suggested_title: str | None = None
+    products:        list[dict] | None = None
+    trends:          list[dict] | None = None
+
+
+# ─── Title generator ──────────────────────────────────────────────────────────
+
+def generate_title(message: str) -> str:
+    """Use the user's message directly as the session title."""
+    text = message.strip()
+    return text[:40] + "…" if len(text) > 40 else text
 
 
 # ─── Chat endpoint ────────────────────────────────────────────────────────────
 
-@router.post("", response_model=ChatResponse)
+@router.post("")
 async def chat(request: ChatRequest):
-    """
-    Main chat endpoint. Receives every message from the frontend,
-    detects what the user wants, and routes to the right handler.
-
-    Intent types:
-      TREND    → calls Google Trends, returns trend data
-      PRODUCT  → queries product database, returns matching products
-      GENERAL  → falls back to a simple assistant reply
-    """
     try:
-        # Step 1 — detect what the user wants
         intent = detect_intent(request.message)
 
-        # Step 2 — route to the right handler
         if intent == Intent.TREND:
-            return await handle_trend_query(request.message, intent, request.platform)
+            result = await handle_trend_query(request.message, intent, request.platform)
+        elif intent == Intent.PRODUCT:
+            result = await handle_product_query(request.message, intent)
+        else:
+            result = await handle_general_query(
+                request.message,
+                intent,
+                history=[m.dict() for m in request.history],
+            )
 
-        if intent == Intent.PRODUCT:
-            return await handle_product_query(request.message, intent)
+        # Add suggested title on first message (no history yet)
+        if not request.history:
+            result["suggested_title"] = generate_title(request.message)
 
-        return await handle_general_query(
-            request.message,
-            intent,
-            history=[m.dict() for m in request.history],
-        )
+        return result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")

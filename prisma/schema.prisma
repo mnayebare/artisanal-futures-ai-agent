@@ -1,17 +1,15 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// ─────────────────────────────────────────────────────────────────────────────
+// Olive Mode — Prisma Schema (local development)
+// Place at: prisma/schema.prisma
+// ─────────────────────────────────────────────────────────────────────────────
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-    provider = "postgresql"
-    // NOTE: When using mysql or sqlserver, uncomment the @db.Text annotations in model Account below
-    // Further reading:
-    // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
-    // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
-    url = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ─── User ─────────────────────────────────────────────────────────────────────
@@ -38,7 +36,6 @@ model Product {
   category    String
   price       Decimal  @db.Decimal(10, 2)
   tag         String?
-  material    String?
   description String?  @db.Text
   imageUrl    String?
   inStock     Boolean  @default(true)
@@ -94,6 +91,7 @@ model ChatMessage {
   role      String
   text      String   @db.Text
   imageUrl  String?
+  metadata  Json?    @default("{}")
   createdAt DateTime @default(now())
 
   session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -102,7 +100,20 @@ model ChatMessage {
   @@map("chat_messages")
 }
 
-// ─── ChatResult ───────────────────────────────────────────────────────────────
+// ─── Feedback ─────────────────────────────────────────────────────────────────
+
+model Feedback {
+  id         String   @id @default(cuid())
+  sessionId  String
+  messageIdx Int                         // index of the message in the session
+  type       String                      // "positive" | "negative"
+  context    String?  @db.Text           // the agent message text it refers to
+  reasoning  String?  @db.Text           // Claude reasoning at time of feedback
+  createdAt  DateTime @default(now())
+
+  @@index([sessionId])
+  @@map("feedback")
+}
 
 model ChatResult {
   id        String   @id @default(cuid())
