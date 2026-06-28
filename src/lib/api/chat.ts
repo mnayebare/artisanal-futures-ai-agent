@@ -8,8 +8,13 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ChatMessage {
-  role: "user" | "agent";
-  text: string;
+  role:      "user" | "agent";
+  text:      string;
+  metadata?: {
+    trends?:    unknown[];
+    reasoning?: string;
+    platform?:  string;
+  };
 }
 
 export interface Product {
@@ -34,6 +39,21 @@ export interface ChatResponse {
   trends?:          TrendResult[];
   suggested_title?: string;
   reasoning?:       string;
+  best_platform?:   "google" | "reddit" | "either";
+  intent_data?: {
+    intent:        string;
+    keyword:       string;
+    subreddit:     string;
+    best_platform: string;
+    reason:        string;
+  };
+  reddit_posts?:    {
+    title:     string;
+    url:       string;
+    comments:  number;
+    score:     number;
+    subreddit: string;
+  }[];
 }
 
 export interface RelatedQuery {

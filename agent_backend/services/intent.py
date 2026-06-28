@@ -1,119 +1,150 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Olive Mode — Intent Detection
+# Olive Mode — Intent Detection via Claude
 # File: services/intent.py
-#
-# Reads the user's message and classifies what they want.
-# This runs before any API calls so we know where to route.
 # ─────────────────────────────────────────────────────────────────────────────
 
+import os
+import json
 from enum import Enum
-import re
+import anthropic
 
 
 class Intent(str, Enum):
-    TREND   = "trend"     # asking about trends
-    PRODUCT = "product"   # looking for a product
-    GENERAL = "general"   # general conversation
+    TREND   = "trend"
+    PRODUCT = "product"
+    GENERAL = "general"
+    CLARIFY = "clarify"
 
 
-# ─── Keyword lists ────────────────────────────────────────────────────────────
-
-TREND_SIGNALS = [
-    "trend", "trending", "popular", "what's hot", "in style",
-    "in fashion", "what's popular", "selling", "people buying",
-    "people wearing", "hot right now", "what's in", "everyone wearing",
-    "google trends", "most searched",
-]
-
-PRODUCT_SIGNALS = [
-    "find", "show me", "looking for", "do you have", "got any",
-    "recommend", "suggest", "what do you have", "i want", "i need",
-    "under $", "budget", "price", "how much", "affordable",
-    "dress", "bag", "jewelry", "top", "skirt", "jumpsuit",
-    "romper", "perfume", "beauty", "earring", "necklace",
-    "crossbody", "tote", "clutch", "outfit", "style",
-]
-
-
-# ─── Keyword extractor ────────────────────────────────────────────────────────
-
-NOISE_WORDS = [
-    "what's", "what is", "what are", "whats", "is", "are",
-    "trending", "popular", "hot", "in style", "in fashion",
-    "people buying", "people wearing", "selling",
-    "on pinterest", "on google", "right now", "at the moment",
-    "this season", "this summer", "this year", "this month",
-    "for summer", "for spring", "for fall", "for winter",
-    "in", "the", "a", "an", "for", "with", "and", "or",
-    "show me", "find me", "do you have", "looking for",
-    "i want", "i need", "can you", "could you",
-]
-
-PLURALS: dict[str, str] = {
-    "dresses": "dress", "jumpsuits": "jumpsuit", "rompers": "romper",
-    "skirts":  "skirt", "tops":      "top",      "blouses": "blouse",
-    "bags":    "bag",   "purses":    "purse",    "clutches": "clutch",
-    "earrings": "earring", "necklaces": "necklace", "bracelets": "bracelet",
-    "outfits": "outfit", "looks":    "look",     "styles":   "style",
-}
-
-SYNONYMS: dict[str, str] = {
-    "going out outfit": "night out dress",
-    "going out dress":  "night out dress",
-    "party dress":      "cocktail dress",
-    "date outfit":      "date night dress",
-    "beach outfit":     "beach dress",
-    "vacation outfit":  "resort wear",
-    "summer look":      "summer dress",
-    "crossbody":        "crossbody bag",
-    "mini":             "mini dress",
-    "midi":             "midi dress",
-    "maxi":             "maxi dress",
-}
-
-
-def extract_keyword(text: str) -> str:
-    """Extract a clean search keyword from natural language."""
-    result = text.lower()
-
-    # Apply synonyms first
-    for phrase, replacement in SYNONYMS.items():
-        if phrase in result:
-            result = result.replace(phrase, replacement)
-
-    # Strip noise words (longest first)
-    for word in sorted(NOISE_WORDS, key=len, reverse=True):
-        result = re.sub(rf"\b{re.escape(word)}\b", "", result, flags=re.IGNORECASE)
-
-    # Normalize plurals
-    result = " ".join(PLURALS.get(w, w) for w in result.split())
-
-    # Clean up and cap at 4 words
-    result = re.sub(r"[?!.,]", "", result).strip()
-    words  = [w for w in result.split() if w][:4]
-    return " ".join(words) or text.strip()
-
-
-# ─── Intent detector ──────────────────────────────────────────────────────────
-
-def detect_intent(message: str) -> Intent:
+async def detect_intent(
+    message:  str,
+    platform: str | None = None,
+    history:  list[dict] | None = None,
+) -> tuple[Intent, str, str, str, str]:
     """
-    Classify the user's message into one of three intents.
-
-    Examples:
-      "what's trending in mesh dresses?"  → TREND
-      "show me bags under $80"            → PRODUCT
-      "hi, how are you?"                  → GENERAL
+    Use Claude Haiku to classify intent with full conversation context.
+    Returns (intent, keyword, subreddit, best_platform) tuple.
     """
-    lower = message.lower()
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    # Trend signals take priority — check first
-    if any(signal in lower for signal in TREND_SIGNALS):
-        return Intent.TREND
+        # Build conversation summary from recent history
+        context_str = ""
+        if history:
+            recent        = history[-6:]
+            context_lines = []
+            for msg in recent:
+                role = "Owner" if msg.get("role") == "user" else "Agent"
+                text = msg.get("text", "")[:150]
+                context_lines.append(f"{role}: {text}")
 
-    # Product signals — looking for something to buy
-    if any(signal in lower for signal in PRODUCT_SIGNALS):
-        return Intent.PRODUCT
+                metadata    = msg.get("metadata") or {}
+                intent_data = metadata.get("intent_data", {})
+                trends      = metadata.get("trends", [])
 
-    # Everything else
-    return Intent.GENERAL
+                # Surface stored intent classification
+                if intent_data and isinstance(intent_data, dict):
+                    kw     = intent_data.get("keyword", "")
+                    intent = intent_data.get("intent", "")
+                    plat   = intent_data.get("best_platform", "")
+                    rsn    = intent_data.get("reason", "")
+                    if kw:
+                        context_lines.append(
+                            f"  [Classified as: intent={intent}, keyword='{kw}', platform={plat}"
+                            + (f", reason={rsn}" if rsn else "") + "]"
+                        )
+
+                # Surface trend keywords from metadata
+                elif trends and isinstance(trends, list):
+                    kw = trends[0].get("keyword", "") if isinstance(trends[0], dict) else ""
+                    if kw:
+                        context_lines.append(f"  [Last trend keyword: '{kw}']")
+
+            context_str = "\n".join(context_lines)
+
+        prompt = f"""You are the routing intelligence for Olive Mode AI — a fashion trend research assistant for a Black-owned women's boutique in Detroit.
+
+The user is the STORE OWNER or BUYER making inventory and sourcing decisions.
+
+AVAILABLE APIS:
+- Google Trends: Search volume, momentum, rising/falling interest, regional data
+- Reddit (r/handbags, r/femalefashionadvice, r/jewelry, r/fragrance): Community opinions
+- Etsy API: Market pricing, buyer reviews (automatic — no user selection)
+- Tavily Web Search: FashionGo, Faire, Adjoaa, Mott the Label, Onuli + fashion media
+- Olive Mode Database: Store's own inventory
+- Pinterest: UNAVAILABLE
+
+CURRENT PLATFORM: {platform or "none"}
+
+RECENT CONVERSATION:
+{context_str if context_str else "This is the first message"}
+
+CURRENT MESSAGE: "{message}"
+
+Classify this message considering the conversation context above.
+Respond with ONLY a JSON object — no other text:
+
+{{
+  "intent": "trend" | "product" | "general" | "clarify",
+  "keyword": "2-4 word search term",
+  "subreddit": "femalefashionadvice" | "handbags" | "jewelry" | "fragrance",
+  "best_platform": "google" | "reddit" | "either",
+  "followup_type": "contextual" | "new_trend" | "action" | "general",
+  "reasoning": "one sentence"
+}}
+
+Intent rules:
+- "trend": researching market trends for ANY product — new or follow-up
+  "what about bags?" after dress query → TREND for "bag"
+  "KITSCH Amber Shores Hair Perfume" → TREND for "hair perfume"
+  "what's trending?" → TREND, keyword from context if available
+- "product": asking about OWN store inventory only
+- "general": conversational — greetings, summaries, "which is better?" using existing data
+- "clarify": genuinely ambiguous even with context
+
+Keyword rules:
+- Extract product category being asked about RIGHT NOW
+- Follow-ups: "what about bags?" → "bag" (not from history)
+- Contextual: "which should I stock?" → use last trend keyword from history
+- Brand names → product type: "KITSCH Hair Perfume" → "hair perfume"
+- 2-4 words max, no brand names
+
+followup_type:
+- "contextual": refers to previous results ("which is better?", "tell me more")
+- "new_trend": new product category ("what about bags?", "show me jewelry")
+- "action": sourcing/buying action ("where do I buy?", "should I restock?")
+- "general": no relation to history
+
+best_platform:
+- "google": quantitative — volume, momentum, numbers
+- "reddit": qualitative — opinions, sentiment, discussions
+- "either": both work
+
+Respond with ONLY the JSON."""
+
+        response = client.messages.create(
+            model      = "claude-haiku-4-5-20251001",
+            max_tokens = 200,
+            messages   = [{"role": "user", "content": prompt}],
+        )
+
+        raw  = response.content[0].text.strip().replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+
+        intent_str    = data.get("intent",        "general").lower()
+        keyword       = data.get("keyword",       "").strip()
+        subreddit     = data.get("subreddit",     "femalefashionadvice").strip()
+        best_platform = data.get("best_platform", "either").strip()
+        followup_type = data.get("followup_type", "general")
+        reason        = data.get("reasoning",     "")
+
+        print(f"[intent] '{message[:60]}' → intent={intent_str}, keyword='{keyword}', "
+              f"followup={followup_type}, platform={best_platform}, "
+              f"reason={reason}")
+
+        intent = Intent(intent_str) if intent_str in Intent._value2member_map_ else Intent.GENERAL
+        return intent, keyword, subreddit, best_platform, reason
+
+    except Exception as e:
+        print(f"[intent] Claude classification failed: {e}, falling back to GENERAL")
+        return Intent.GENERAL, "", "femalefashionadvice", "either", ""

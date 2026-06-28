@@ -140,7 +140,111 @@ async def save_messages_bulk(
         )
 
 
-# ─── Feedback ─────────────────────────────────────────────────────────────────
+# ─── Products ─────────────────────────────────────────────────────────────────
+
+# Category synonym mapping — maps search terms to DB category values
+CATEGORY_SYNONYMS: dict[str, list[str]] = {
+    "bag":       ["bag"],
+    "bags":      ["bag"],
+    "handbag":   ["bag"],
+    "handbags":  ["bag"],
+    "purse":     ["bag"],
+    "clutch":    ["bag"],
+    "tote":      ["bag"],
+    "satchel":   ["bag"],
+    "crossbody": ["bag"],
+    "dress":     ["dress"],
+    "dresses":   ["dress"],
+    "jewelry":   ["jewelry"],
+    "jewellery": ["jewelry"],
+    "earring":   ["jewelry"],
+    "necklace":  ["jewelry"],
+    "bracelet":  ["jewelry"],
+    "ring":      ["jewelry"],
+    "perfume":   ["perfume"],
+    "fragrance": ["perfume"],
+    "scent":     ["perfume"],
+    "beauty":    ["beauty", "perfume"],
+    "skirt":     ["skirt"],
+    "top":       ["top"],
+    "set":       ["set"],
+}
+
+
+async def search_products(
+    keyword:   str | None = None,
+    category:  str | None = None,
+    max_price: float | None = None,
+    limit:     int = 10,
+) -> list[dict]:
+    """
+    Search products by keyword, category and price.
+    Resolves keyword synonyms to DB category values for better matching.
+    """
+    pool = await get_pool()
+
+    conditions = ['"inStock" = true']
+    params     = []
+    idx        = 1
+
+    if keyword:
+        kw_lower = keyword.lower()
+
+        # Check if keyword maps to a known category
+        matched_categories = []
+        for term, cats in CATEGORY_SYNONYMS.items():
+            if term in kw_lower:
+                matched_categories.extend(cats)
+
+        if matched_categories:
+            # Search by category match OR keyword in name/description
+            unique_cats    = list(set(matched_categories))
+            cat_conditions = " OR ".join(
+                f"LOWER(category) = ${idx + i}" for i in range(len(unique_cats))
+            )
+            for cat in unique_cats:
+                params.append(cat.lower())
+            idx += len(unique_cats)
+
+            params.append(f"%{kw_lower}%")
+            conditions.append(
+                f'({cat_conditions} OR LOWER("productName") LIKE ${idx} OR LOWER(description) LIKE ${idx})'
+            )
+            idx += 1
+        else:
+            # Generic keyword search across name, description, category
+            conditions.append(
+                f'(LOWER("productName") LIKE ${idx} OR LOWER(description) LIKE ${idx} OR LOWER(category) LIKE ${idx})'
+            )
+            params.append(f"%{kw_lower}%")
+            idx += 1
+
+    if category:
+        conditions.append(f'LOWER(category) = ${idx}')
+        params.append(category.lower())
+        idx += 1
+
+    if max_price:
+        conditions.append(f'price <= ${idx}')
+        params.append(max_price)
+        idx += 1
+
+    where = " AND ".join(conditions)
+    params.append(limit)
+
+    print(f"[db] search_products keyword='{keyword}' → SQL: WHERE {where} | params={params}")
+
+    rows = await pool.fetch(
+        f"""
+        SELECT id, "productName", category, price, tag, description, "imageUrl", "inStock", material
+        FROM products
+        WHERE {where}
+        ORDER BY price ASC
+        LIMIT ${idx}
+        """,
+        *params
+    )
+    return [dict(r) for r in rows]
 
 async def save_feedback(
     session_id:    str,

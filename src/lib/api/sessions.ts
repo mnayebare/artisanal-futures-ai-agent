@@ -19,9 +19,24 @@ export interface StoredMessage {
   text:      string;
   imageUrl?: string;
   metadata?: {
-    trends?:   unknown[];
-    products?: unknown[];
-    platform?: string;
+    trends?:       unknown[];
+    products?:     unknown[];
+    platform?:     string;
+    reasoning?:    string;
+    reddit_posts?: {
+      title:     string;
+      url:       string;
+      comments:  number;
+      score:     number;
+      subreddit: string;
+    }[];
+    intent_data?: {
+      intent:        string;
+      keyword:       string;
+      subreddit:     string;
+      best_platform: string;
+      reason:        string;
+    };
   };
   createdAt?: string;
 }

@@ -36,6 +36,7 @@ model Product {
   category    String
   price       Decimal  @db.Decimal(10, 2)
   tag         String?
+  material    String?
   description String?  @db.Text
   imageUrl    String?
   inStock     Boolean  @default(true)

@@ -30,6 +30,23 @@ interface Message {
   awaitingPlatform?: boolean;
   reasoning?:        string;
   feedback?:         "positive" | "negative" | null;
+  redditPosts?:      RedditPost[];
+  bestPlatform?:     "google" | "reddit" | "either";
+  intentData?: {
+    intent:        string;
+    keyword:       string;
+    subreddit:     string;
+    best_platform: string;
+    reason:        string;
+  };
+}
+
+interface RedditPost {
+  title:    string;
+  url:      string;
+  comments: number;
+  score:    number;
+  subreddit: string;
 }
 
 interface ChatSession {
@@ -275,11 +292,20 @@ function TrendCard({ trend }: { trend: TrendResult }) {
 
 function PlatformSelector({
   onSelect,
+  recommended,
 }: {
-  onSelect: (platform: TrendPlatform) => void;
+  onSelect:     (platform: TrendPlatform) => void;
+  recommended?: "google" | "reddit" | "either";
 }) {
   return (
     <div className="flex flex-col gap-2 mt-1">
+      {recommended && recommended !== "either" && (
+        <p className="text-[11px] px-1" style={{ color: olive[600] }}>
+          💡 {recommended === "google"
+            ? "Agent recommends Google Trends for quantitative data"
+            : "Agent recommends Reddit for community sentiment"}
+        </p>
+      )}
       {PLATFORM_OPTIONS.map((option) => (
         <button
           key={option.id}
@@ -287,8 +313,8 @@ function PlatformSelector({
           disabled={!option.available}
           className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition"
           style={{
-            borderColor:     option.available ? olive[300] : "#e7e5e4",
-            backgroundColor: option.available ? "#fff"     : "#fafaf9",
+            borderColor:     recommended === option.id ? olive[600] : option.available ? olive[300] : "#e7e5e4",
+            backgroundColor: recommended === option.id ? olive[50]  : option.available ? "#fff"     : "#fafaf9",
             opacity:         option.available ? 1 : 0.5,
             cursor:          option.available ? "pointer" : "not-allowed",
           }}
@@ -298,7 +324,8 @@ function PlatformSelector({
           }}
           onMouseLeave={e => {
             if (option.available)
-              (e.currentTarget as HTMLElement).style.backgroundColor = "#fff";
+              (e.currentTarget as HTMLElement).style.backgroundColor =
+                recommended === option.id ? olive[50] : "#fff";
           }}
         >
           {/* Icon */}
@@ -306,13 +333,21 @@ function PlatformSelector({
             className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
             style={{ backgroundColor: olive[100], color: olive[700] }}
           >
-            {option.id === "google" ? "G" : "P"}
+            {option.id === "google" ? "G" : option.id === "reddit" ? "R" : "P"}
           </div>
 
           {/* Label */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
               <p className="text-sm font-medium text-stone-800">{option.label}</p>
+              {recommended === option.id && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                  style={{ backgroundColor: olive[200], color: olive[800] }}
+                >
+                  Recommended
+                </span>
+              )}
               {!option.available && (
                 <span
                   className="rounded-full px-1.5 py-0.5 text-[9px] font-medium"
@@ -364,7 +399,7 @@ function ChatBubble({
   return (
     <div className={`flex items-start gap-2 ${message.role === "user" ? "flex-row-reverse" : ""}`}>
       <Avatar role={message.role} />
-      <div className="flex flex-col gap-2 min-w-0 flex-1 max-w-[85%]">
+      <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-[85%]">
 
         {/* Text bubble */}
         <div
@@ -375,7 +410,87 @@ function ChatBubble({
               : { backgroundColor: "#f5f5f4", color: "#292524", borderBottomLeftRadius: 4 }
           }
         >
-          {message.text}
+          {message.role === "agent"
+            ? message.text.split("\n").map((line, i) => {
+                // Indented arrow link:   → [title](url)
+                const arrowLink = /^\s+→\s*\[([^\]]+)\]\(([^)]+)\)(.*)$/.exec(line);
+                if (arrowLink) {
+                  return (
+                    <p key={i} className="ml-4 mt-0.5 flex items-start gap-1">
+                      <span className="text-stone-400 text-xs mt-0.5">→</span>
+                      <a
+                        href={arrowLink[2]}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline text-xs font-medium hover:opacity-80"
+                        style={{ color: olive[700] }}
+                      >
+                        {arrowLink[1]}
+                      </a>
+                    </p>
+                  );
+                }
+
+                // Bullet line with embedded markdown link: • text → [title](url)
+                const bulletWithLink = /^[•\-]\s*(.+?)\s*→\s*\[([^\]]+)\]\(([^)]+)\)(.*)$/.exec(line);
+                if (bulletWithLink) {
+                  return (
+                    <p key={i} className="mt-1 flex items-start gap-1.5">
+                      <span style={{ color: olive[400] }}>•</span>
+                      <span className="text-sm">
+                        <span>{bulletWithLink[1]} → </span>
+                        <a
+                          href={bulletWithLink[3]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-medium hover:opacity-80"
+                          style={{ color: olive[700] }}
+                        >
+                          {bulletWithLink[2]}
+                        </a>
+                        {bulletWithLink[4] && (
+                          <span className="text-stone-500">{bulletWithLink[4]}</span>
+                        )}
+                      </span>
+                    </p>
+                  );
+                }
+
+                // Bullet line with just a markdown link: • [title](url) N comments
+                const bulletLink = /^[•\-]\s*\[([^\]]+)\]\(([^)]+)\)\s*(.*)$/.exec(line);
+                if (bulletLink) {
+                  return (
+                    <p key={i} className="mt-1 flex items-start gap-1.5">
+                      <span style={{ color: olive[400] }}>•</span>
+                      <span>
+                        <a
+                          href={bulletLink[2]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline font-medium hover:opacity-80"
+                          style={{ color: olive[700] }}
+                        >
+                          {bulletLink[1]}
+                        </a>
+                        {bulletLink[3] && (
+                          <span className="text-stone-400 text-xs ml-1.5">
+                            {bulletLink[3]}
+                          </span>
+                        )}
+                      </span>
+                    </p>
+                  );
+                }
+
+                // Regular line
+                return (
+                  <p key={i} className={i > 0 && line ? "mt-1" : ""}>
+                    {line}
+                  </p>
+                );
+              })
+            : message.text
+          }
         </div>
 
         {/* Agent action buttons — copy + feedback */}
@@ -436,7 +551,10 @@ function ChatBubble({
 
         {/* Platform selector */}
         {message.awaitingPlatform && onPlatformSelect && (
-          <PlatformSelector onSelect={onPlatformSelect} />
+          <PlatformSelector
+            onSelect={onPlatformSelect}
+            recommended={message.bestPlatform}
+          />
         )}
 
         {/* Trend cards */}
@@ -449,6 +567,26 @@ function ChatBubble({
             {message.trends.map((trend, i) => (
               <TrendCard key={i} trend={trend} />
             ))}
+          </div>
+        )}
+
+        {/* Intent reason — shown below user messages so owner can verify understanding */}
+        {message.role === "user" && message.intentData?.reason && (
+          <div className="flex justify-end">
+            <div
+              className="flex items-start gap-1.5 rounded-lg px-2 py-1.5 max-w-[90%]"
+              style={{ backgroundColor: olive[50], border: `1px solid ${olive[200]}` }}
+            >
+              <svg className="h-3 w-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                viewBox="0 0 24 24" style={{ color: olive[600] }}>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              <p className="text-[10px] leading-relaxed" style={{ color: olive[700] }}>
+                <span className="font-semibold">Agent understood: </span>
+                {message.intentData.reason}
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -664,14 +802,32 @@ export default function HomePage() {
       if (textareaRef.current) textareaRef.current.style.height = "64px";
       // Add the user message + selector prompt to the chat
       const userMessage: Message = { role: "user", text };
+      // Pre-fetch intent to get platform recommendation
+      let bestPlatform: "google" | "reddit" | "either" = "either";
+      try {
+        const intentRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/chat/intent`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({
+            message: text,
+            history: activeSession.messages.map(m => ({ role: m.role, text: m.text })),
+          }),
+        });
+        if (intentRes.ok) {
+          const intentData = await intentRes.json() as { best_platform?: "google" | "reddit" | "either" };
+          bestPlatform = intentData.best_platform ?? "either";
+        }
+      } catch { /* fall through with default */ }
+
       updateSession(activeId, {
         messages: [
           ...activeSession.messages,
           userMessage,
           {
-            role: "agent",
-            text: "Which platform would you like to get trend data from?",
+            role:             "agent",
+            text:             "Which platform would you like to get trend data from?",
             awaitingPlatform: true,
+            bestPlatform,
           },
         ],
       });
@@ -708,7 +864,16 @@ export default function HomePage() {
       // Single API call — /chat handles intent detection, trends, and reply
       const chatData = await sendChatMessage({
         message:  text,
-        history:  updatedMessages.map((m) => ({ role: m.role, text: m.text })),
+        history:  updatedMessages.map((m) => ({
+          role: m.role,
+          text: m.text,
+          metadata: m.reasoning ?? m.trends ?? m.intentData ? {
+            reasoning:   m.reasoning,
+            trends:      m.trends,
+            platform:    m.platform,
+            intent_data: m.intentData,
+          } : undefined,
+        })),
         platform,
         ...(uploadedImage && { image_base64: uploadedImage.base64 }),
       });
@@ -717,19 +882,29 @@ export default function HomePage() {
 
       const trendResults = chatData.trends ?? [];
       const agentMessage: Message = {
-        role:      "agent",
-        text:      chatData.reply,
-        trends:    trendResults.length > 0 ? trendResults : undefined,
+        role:        "agent",
+        text:        chatData.reply,
+        trends:      trendResults.length > 0 ? trendResults : undefined,
         platform,
-        reasoning: chatData.reasoning,
-        feedback:  null,
+        reasoning:   chatData.reasoning,
+        redditPosts: chatData.reddit_posts,
+        intentData:  chatData.intent_data,
+        feedback:    null,
       };
+
+      // Backfill intent data onto the user message so the reason shows below it
+      const messagesWithIntent = [...updatedMessages, agentMessage].map((m, idx) => {
+        if (idx === updatedMessages.length - 1 && m.role === "user" && chatData.intent_data) {
+          return { ...m, intentData: chatData.intent_data };
+        }
+        return m;
+      });
 
       // Use server-generated title if available, otherwise keep current
       const finalTitle = chatData.suggested_title ?? newTitle;
 
       updateSession(activeId, {
-        messages:  [...updatedMessages, agentMessage],
+        messages:  messagesWithIntent,
         results:   chatData.products ?? activeSession.results,
         title:     finalTitle,
         reasoning: chatData.reasoning ?? activeSession.reasoning,
@@ -742,12 +917,15 @@ export default function HomePage() {
         await saveSessionMessages(
           sid,
           finalTitle,
-          [...updatedMessages, agentMessage].map(m => ({
+          messagesWithIntent.map(m => ({
             role:     m.role,
             text:     m.text,
-            metadata: m.trends || m.platform ? {
-              trends:   m.trends,
-              platform: m.platform,
+            metadata: m.trends || m.platform || m.reasoning || m.redditPosts || m.intentData ? {
+              trends:       m.trends,
+              platform:     m.platform,
+              reasoning:    m.reasoning,
+              reddit_posts: m.redditPosts,
+              intent_data:  m.intentData,
             } : undefined,
           }))
         );
@@ -935,19 +1113,28 @@ export default function HomePage() {
                         return;
                       }
                       const msgs = await fetchSessionMessages(stored.id);
+
+                      // Extract the most recent reasoning from message metadata
+                      const lastReasoning = [...msgs]
+                        .reverse()
+                        .find(m => m.metadata?.reasoning)
+                        ?.metadata?.reasoning;
+
                       const session: ChatSession = {
                         id:        stored.id,
                         title:     stored.title,
                         messages:  msgs.length > 0
                           ? msgs.map(m => ({
-                              role:     m.role,
-                              text:     m.text,
-                              trends:   m.metadata?.trends as TrendResult[] | undefined,
-                              platform: m.metadata?.platform as TrendPlatform | undefined,
+                              role:        m.role,
+                              text:        m.text,
+                              trends:      m.metadata?.trends as TrendResult[] | undefined,
+                              platform:    m.metadata?.platform as TrendPlatform | undefined,
+                              reasoning:   m.metadata?.reasoning,
+                              redditPosts: m.metadata?.reddit_posts,
                             }))
                           : [makeWelcomeMessage()],
                         results:   [],
-                        reasoning: null,
+                        reasoning: lastReasoning ?? null,
                       };
                       setSessions(prev => [session, ...prev.filter(s => s.id !== stored.id)]);
                       setActiveId(stored.id);
@@ -1050,55 +1237,14 @@ export default function HomePage() {
         <div className="border-t border-stone-200 bg-white px-5 py-4">
           <div className="mx-auto max-w-2xl">
 
-            {/* Image preview */}
-            {uploadedImage && (
-              <div className="mb-2 flex items-center gap-2 rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={uploadedImage.preview}
-                  alt="Upload preview"
-                  className="h-10 w-10 rounded-lg object-cover flex-shrink-0"
-                />
-                <span className="flex-1 truncate text-xs text-stone-500">{uploadedImage.name}</span>
-                <button
-                  onClick={clearImage}
-                  aria-label="Remove image"
-                  className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-stone-200 text-stone-500 transition hover:bg-stone-300"
-                >
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-            )}
+            {/* Image preview — disabled until next iteration */}
 
             {/* Input row */}
             <div className="flex items-end gap-2">
 
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageSelect}
-              />
+              {/* Hidden file input — disabled until next iteration */}
 
-              {/* Upload button */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Upload image"
-                title="Upload image"
-                className="flex h-14 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-stone-200 bg-stone-50 text-stone-400 transition hover:border-stone-300 hover:text-stone-600"
-                style={uploadedImage
-                  ? { borderColor: olive[400], color: olive[600], backgroundColor: olive[50] }
-                  : {}}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                    d="M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2 1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z" />
-                </svg>
-              </button>
+              {/* Upload button — disabled until next iteration */}
 
               {/* Textarea */}
               <textarea
@@ -1125,7 +1271,7 @@ export default function HomePage() {
               {/* Send button */}
               <button
                 onClick={() => void sendMessage(undefined)}
-                disabled={(!input.trim() && !uploadedImage) || isTyping}
+                disabled={!input.trim() || isTyping}
                 aria-label="Send message"
                 className="flex h-14 w-11 flex-shrink-0 items-center justify-center rounded-2xl text-white transition disabled:cursor-not-allowed disabled:opacity-40"
                 style={{ backgroundColor: olive[600] }}
@@ -1260,7 +1406,38 @@ export default function HomePage() {
                   </div>
                 </div>
                 <p className="text-xs leading-relaxed text-stone-700 whitespace-pre-wrap">
-                  {activeSession.reasoning}
+                  {activeSession.reasoning.split("\n").map((line, i) => {
+                    // Section headers **bold**
+                    const headerMatch = /^\*\*(.+)\*\*$/.exec(line.trim());
+                    if (headerMatch) {
+                      return (
+                        <span key={i} className="block mt-3 mb-1 text-xs font-semibold"
+                          style={{ color: olive[700] }}>
+                          {headerMatch[1]}
+                        </span>
+                      );
+                    }
+                    // Suggested post label
+                    const suggestedMatch = /^(Suggested .+ Post:)(.*)$/.exec(line.trim());
+                    if (suggestedMatch?.[1]) {
+                      return (
+                        <span key={i} className="block mt-2">
+                          <span
+                            className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide mr-1"
+                            style={{ backgroundColor: olive[100], color: olive[700] }}
+                          >
+                            {suggestedMatch[1].replace(":", "")}
+                          </span>
+                          {suggestedMatch[2] ?? ""}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span key={i} className={line.trim() ? "block" : "block h-2"}>
+                        {line}
+                      </span>
+                    );
+                  })}
                 </p>
               </div>
             </div>

@@ -80,8 +80,8 @@ def clean_keyword(text: str) -> str:
     result = re.sub(r"[?!.,;:\'\"\u2019\u2018]", "", result)
     result = re.sub(r"\s+", " ", result).strip()
 
-    # Cap at 3 words
-    words = [w for w in result.split() if w][:3]
+    # Cap at 4 words
+    words = [w for w in result.split() if w][:4]
     result = " ".join(words)
 
     print(f"[clean_keyword] '{text}' → '{result}'")

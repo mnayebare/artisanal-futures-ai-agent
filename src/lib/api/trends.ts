@@ -5,7 +5,7 @@
 
 // ─── Platform selection ───────────────────────────────────────────────────────
 
-export type TrendPlatform = "google" | "pinterest";
+export type TrendPlatform = "google" | "pinterest" | "reddit";
 
 export interface PlatformOption {
   id:          TrendPlatform;
@@ -22,10 +22,16 @@ export const PLATFORM_OPTIONS: PlatformOption[] = [
     available:   true,
   },
   {
+    id:          "reddit",
+    label:       "Reddit",
+    description: "Real opinions from fashion communities on similar products",
+    available:   true,
+  },
+  {
     id:          "pinterest",
     label:       "Pinterest Trends",
     description: "Save intent, demographics & visual trend data",
-    available:   false, // re-enable when Standard access approved
+    available:   false,
   },
 ];
 

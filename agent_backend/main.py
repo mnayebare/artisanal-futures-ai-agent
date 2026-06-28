@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import chat, google, pinterest, sessions, feedback
+from routers import chat, google, pinterest, sessions, feedback, reddit, etsy, websearch
 
 # Explicitly load .env from the same directory as main.py
 load_dotenv(dotenv_path=Path(__file__).parent / ".env")
@@ -43,6 +43,9 @@ app.include_router(chat.router)
 app.include_router(sessions.router)
 app.include_router(feedback.router)
 app.include_router(google.router)
+app.include_router(reddit.router)
+app.include_router(etsy.router)
+app.include_router(websearch.router)
 # app.include_router(pinterest.router) ← disabled until Standard access approved
 # app.include_router(shopify.router)   ← add when ready
 
