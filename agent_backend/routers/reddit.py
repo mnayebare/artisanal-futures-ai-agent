@@ -37,6 +37,18 @@ SUBREDDIT_MAP: dict[str, list[str]] = {
     "clothing":     ["femalefashionadvice"],
     "top":          ["femalefashionadvice"],
     "skirt":        ["femalefashionadvice"],
+
+    # ── African fashion keywords ──────────────────────────────────────────────
+    "african":      ["femalefashionadvice"],
+    "ankara":       ["femalefashionadvice"],
+    "kente":        ["femalefashionadvice"],
+    "adire":        ["femalefashionadvice"],
+    "dashiki":      ["femalefashionadvice"],
+    "afropunk":     ["femalefashionadvice"],
+    "afro":         ["femalefashionadvice"],
+    "kitenge":      ["femalefashionadvice"],
+    "wax print":    ["femalefashionadvice"],
+    "african print":["femalefashionadvice"],
 }
 
 DEFAULT_SUBREDDITS = ["femalefashionadvice"]

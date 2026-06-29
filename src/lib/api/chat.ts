@@ -41,11 +41,11 @@ export interface ChatResponse {
   reasoning?:       string;
   best_platform?:   "google" | "reddit" | "either";
   intent_data?: {
-    intent:        string;
-    keyword:       string;
-    subreddit:     string;
-    best_platform: string;
-    reason:        string;
+    intent:    string;
+    keyword:   string;
+    subreddit: string;
+    reason:    string;
+    plan:      string[];
   };
   reddit_posts?:    {
     title:     string;

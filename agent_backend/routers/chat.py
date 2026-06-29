@@ -3,7 +3,6 @@
 # File: routers/chat.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from services.intent import detect_intent, Intent
@@ -27,7 +26,6 @@ class ChatMessageIn(BaseModel):
 class ChatRequest(BaseModel):
     message:      str
     history:      list[ChatMessageIn] = []
-    platform:     str | None = None
     image_base64: str | None = None
 
 class IntentRequest(BaseModel):
@@ -38,30 +36,21 @@ class IntentRequest(BaseModel):
 # ─── Title generator ──────────────────────────────────────────────────────────
 
 def generate_title(message: str) -> str:
-    """Use the user's message directly as the session title."""
     text = message.strip()
     return text[:40] + "…" if len(text) > 40 else text
 
 
-# ─── Intent-only endpoint (lightweight — for platform selector hint) ──────────
+# ─── Intent-only endpoint ─────────────────────────────────────────────────────
 
 @router.post("/intent")
 async def get_intent(request: IntentRequest):
-    """Returns intent classification and platform recommendation without running full pipeline."""
+    """Lightweight — returns intent classification without running full pipeline."""
     try:
         history_dicts = [{"role": m.role, "text": m.text, "metadata": m.metadata} for m in request.history]
-        intent, keyword, subreddit, best_platform, reason = await detect_intent(
-            request.message,
-            history=history_dicts,
-        )
-        return {
-            "intent":        intent,
-            "keyword":       keyword,
-            "best_platform": best_platform,
-            "reason":        reason,
-        }
+        intent, keyword, subreddit, reason, plan = await detect_intent(request.message, history_dicts)
+        return {"intent": intent, "keyword": keyword, "reason": reason}
     except Exception:
-        return {"intent": "general", "keyword": "", "best_platform": "either", "reason": ""}
+        return {"intent": "general", "keyword": "", "reason": ""}
 
 
 # ─── Main chat endpoint ───────────────────────────────────────────────────────
@@ -69,34 +58,48 @@ async def get_intent(request: IntentRequest):
 @router.post("")
 async def chat(request: ChatRequest):
     try:
-        # Claude classifies intent with full conversation context
         history_dicts = [{"role": m.role, "text": m.text, "metadata": m.metadata} for m in request.history]
-        intent, keyword, subreddit, best_platform, reason = await detect_intent(
-            request.message,
-            request.platform,
-            history_dicts,
-        )
+        intent, keyword, subreddit, reason, plan = await detect_intent(request.message, history_dicts)
 
         if intent == Intent.TREND:
-            if request.platform == "reddit":
-                result = await handle_reddit_query(request.message, intent, keyword, subreddit)
-            elif request.platform == "pinterest":
-                result = {
-                    "reply":  "Pinterest Trends is pending approval. Please use Google Trends or Reddit instead.",
-                    "intent": intent,
-                    "source": "pinterest",
-                }
-            else:
-                result = await handle_trend_query(request.message, intent, request.platform, keyword)
+            # Always run Google Trends for quantitative data
+            result = await handle_trend_query(request.message, intent, "google", keyword)
 
-            result["best_platform"] = best_platform
+            # Enrich with Reddit community sentiment
+            try:
+                reddit_result = await handle_reddit_query(request.message, intent, keyword, subreddit)
+
+                # Merge Reddit reasoning into reasoning panel
+                if reddit_result.get("reasoning"):
+                    google_reasoning = result.get("reasoning", "")
+                    reddit_reasoning = reddit_result["reasoning"]
+                    result["reasoning"] = (
+                        google_reasoning +
+                        "\n\n**Community Sentiment (Reddit)**\n" +
+                        reddit_reasoning
+                        if google_reasoning else reddit_reasoning
+                    )
+
+                # Append Reddit post links to the reply
+                if reddit_result.get("reply") and "Found" in reddit_result.get("reply", ""):
+                    result["reply"] = (
+                        result.get("reply", "") +
+                        "\n\n" + reddit_result["reply"]
+                    )
+
+                # Pass through reddit_posts for storage
+                if reddit_result.get("reddit_posts"):
+                    result["reddit_posts"] = reddit_result["reddit_posts"]
+
+            except Exception as e:
+                print(f"[chat] reddit enrichment failed: {e}")
 
         elif intent == Intent.CLARIFY:
             result = {
-                "reply":         f"Could you tell me more about what you're looking for with \"{request.message}\"? Are you researching how this product is trending in the market, or looking at your own store inventory?",
-                "intent":        intent,
-                "source":        "clarify",
-                "best_platform": best_platform,
+                "reply":  f"Could you tell me more about what you're looking for with \"{request.message}\"? "
+                          f"Are you researching how this product is trending in the market, or looking at your own store inventory?",
+                "intent": intent,
+                "source": "clarify",
             }
 
         elif intent == Intent.PRODUCT:
@@ -106,20 +109,20 @@ async def chat(request: ChatRequest):
             result = await handle_general_query(
                 request.message,
                 intent,
-                history=[{"role": m.role, "text": m.text, "metadata": m.metadata} for m in request.history],
+                history=history_dicts,
             )
 
-        # Add suggested title on first message
+        # Suggested title on first message
         if not request.history:
             result["suggested_title"] = generate_title(request.message)
 
-        # Always include intent metadata for storage
+        # Store intent metadata including plan
         result["intent_data"] = {
-            "intent":        intent,
-            "keyword":       keyword,
-            "subreddit":     subreddit,
-            "best_platform": best_platform,
-            "reason":        reason,
+            "intent":    intent,
+            "keyword":   keyword,
+            "subreddit": subreddit,
+            "reason":    reason,
+            "plan":      plan,
         }
 
         return result

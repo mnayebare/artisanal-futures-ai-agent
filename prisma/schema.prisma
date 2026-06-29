@@ -106,13 +106,18 @@ model ChatMessage {
 model Feedback {
   id         String   @id @default(cuid())
   sessionId  String
-  messageIdx Int                         // index of the message in the session
+  messageIdx Int
   type       String                      // "positive" | "negative"
-  context    String?  @db.Text           // the agent message text it refers to
-  reasoning  String?  @db.Text           // Claude reasoning at time of feedback
+  context    String?  @db.Text
+  reasoning  String?  @db.Text
+  plan       Json?                       // agent plan steps at time of feedback
+  keyword    String?                     // keyword being researched
+  intent     String?                     // classified intent
   createdAt  DateTime @default(now())
 
   @@index([sessionId])
+  @@index([type])
+  @@index([intent])
   @@map("feedback")
 }
 

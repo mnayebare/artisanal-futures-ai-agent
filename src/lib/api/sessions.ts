@@ -31,11 +31,11 @@ export interface StoredMessage {
       subreddit: string;
     }[];
     intent_data?: {
-      intent:        string;
-      keyword:       string;
-      subreddit:     string;
-      best_platform: string;
-      reason:        string;
+      intent:    string;
+      keyword:   string;
+      subreddit: string;
+      reason:    string;
+      plan:      string[];
     };
   };
   createdAt?: string;

@@ -11,6 +11,9 @@ export async function submitFeedback(payload: {
   type:        "positive" | "negative";
   context?:    string;
   reasoning?:  string;
+  plan?:       string[];
+  keyword?:    string;
+  intent?:     string;
 }): Promise<void> {
   try {
     await fetch(`${API_BASE}/feedback`, {

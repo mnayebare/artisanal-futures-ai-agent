@@ -13,14 +13,17 @@ router = APIRouter(prefix="/feedback", tags=["Feedback"])
 class FeedbackRequest(BaseModel):
     session_id:   str
     message_idx:  int
-    type:         str          # "positive" | "negative"
-    context:      str | None = None   # agent message text
-    reasoning:    str | None = None   # Claude reasoning at time of feedback
+    type:         str
+    context:      str | None = None
+    reasoning:    str | None = None
+    plan:         list | None = None
+    keyword:      str | None = None
+    intent:       str | None = None
 
 
 @router.post("")
 async def save_feedback(body: FeedbackRequest):
-    """Save thumbs up or thumbs down feedback for an agent message."""
+    """Save thumbs up or thumbs down feedback including agent plan for model evaluation."""
     if body.type not in ("positive", "negative"):
         raise HTTPException(status_code=400, detail="type must be 'positive' or 'negative'")
     try:
@@ -30,6 +33,9 @@ async def save_feedback(body: FeedbackRequest):
             feedback_type = body.type,
             context       = body.context,
             reasoning     = body.reasoning,
+            plan          = body.plan,
+            keyword       = body.keyword,
+            intent        = body.intent,
         )
         return {"saved": True, "type": body.type}
     except Exception as e:

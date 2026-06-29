@@ -252,14 +252,20 @@ async def save_feedback(
     feedback_type: str,
     context:       str | None = None,
     reasoning:     str | None = None,
+    plan:          list | None = None,
+    keyword:       str | None = None,
+    intent:        str | None = None,
 ) -> None:
-    """Save thumbs up/down feedback for an agent message."""
-    pool = await get_pool()
+    """Save thumbs up/down feedback including agent plan for model evaluation."""
+    import json
+    pool     = await get_pool()
+    plan_str = json.dumps(plan) if plan else None
     await pool.execute(
         """
-        INSERT INTO feedback (id, "sessionId", "messageIdx", type, context, reasoning, "createdAt")
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        INSERT INTO feedback (id, "sessionId", "messageIdx", type, context, reasoning, plan, keyword, intent, "createdAt")
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, NOW())
         """,
-        str(uuid.uuid4()), session_id, message_idx, feedback_type, context, reasoning
+        str(uuid.uuid4()), session_id, message_idx, feedback_type,
+        context, reasoning, plan_str, keyword, intent
     )
-    print(f"[db] feedback saved: {feedback_type} for message {message_idx}")
+    print(f"[db] feedback saved: {feedback_type} for message {message_idx} | keyword={keyword} | intent={intent}")

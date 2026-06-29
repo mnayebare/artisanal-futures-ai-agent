@@ -4,8 +4,6 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import Image from "next/image";
 import {
   sendChatMessage,
-  needsPlatformSelection,
-  PLATFORM_OPTIONS,
   fetchSessions,
   createSession,
   fetchSessionMessages,
@@ -33,11 +31,11 @@ interface Message {
   redditPosts?:      RedditPost[];
   bestPlatform?:     "google" | "reddit" | "either";
   intentData?: {
-    intent:        string;
-    keyword:       string;
-    subreddit:     string;
-    best_platform: string;
-    reason:        string;
+    intent:    string;
+    keyword:   string;
+    subreddit: string;
+    reason:    string;
+    plan:      string[];
   };
 }
 
@@ -81,7 +79,7 @@ function generateId(): string {
 function makeWelcomeMessage(): Message {
   return {
     role: "agent",
-    text: "Hi! I'm your Olive Mode shopping assistant. Tell me what you're looking for — an occasion, a style, a budget — and I'll find the right pieces for you.",
+    text: "Hi! I'm your Olive Mode AI — your trends, marketing, sourcing and inventory assistant. Ask me what's trending in dresses or bags, find African fashion brands to stock, research Reddit community sentiment, or get a buying recommendation based on real market data.",
   };
 }
 
@@ -290,102 +288,16 @@ function TrendCard({ trend }: { trend: TrendResult }) {
 
 // ─── PlatformSelector ─────────────────────────────────────────────────────────
 
-function PlatformSelector({
-  onSelect,
-  recommended,
-}: {
-  onSelect:     (platform: TrendPlatform) => void;
-  recommended?: "google" | "reddit" | "either";
-}) {
-  return (
-    <div className="flex flex-col gap-2 mt-1">
-      {recommended && recommended !== "either" && (
-        <p className="text-[11px] px-1" style={{ color: olive[600] }}>
-          💡 {recommended === "google"
-            ? "Agent recommends Google Trends for quantitative data"
-            : "Agent recommends Reddit for community sentiment"}
-        </p>
-      )}
-      {PLATFORM_OPTIONS.map((option) => (
-        <button
-          key={option.id}
-          onClick={() => option.available && onSelect(option.id)}
-          disabled={!option.available}
-          className="flex items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition"
-          style={{
-            borderColor:     recommended === option.id ? olive[600] : option.available ? olive[300] : "#e7e5e4",
-            backgroundColor: recommended === option.id ? olive[50]  : option.available ? "#fff"     : "#fafaf9",
-            opacity:         option.available ? 1 : 0.5,
-            cursor:          option.available ? "pointer" : "not-allowed",
-          }}
-          onMouseEnter={e => {
-            if (option.available)
-              (e.currentTarget as HTMLElement).style.backgroundColor = olive[50];
-          }}
-          onMouseLeave={e => {
-            if (option.available)
-              (e.currentTarget as HTMLElement).style.backgroundColor =
-                recommended === option.id ? olive[50] : "#fff";
-          }}
-        >
-          {/* Icon */}
-          <div
-            className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
-            style={{ backgroundColor: olive[100], color: olive[700] }}
-          >
-            {option.id === "google" ? "G" : option.id === "reddit" ? "R" : "P"}
-          </div>
-
-          {/* Label */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium text-stone-800">{option.label}</p>
-              {recommended === option.id && (
-                <span
-                  className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
-                  style={{ backgroundColor: olive[200], color: olive[800] }}
-                >
-                  Recommended
-                </span>
-              )}
-              {!option.available && (
-                <span
-                  className="rounded-full px-1.5 py-0.5 text-[9px] font-medium"
-                  style={{ backgroundColor: olive[50], color: olive[600] }}
-                >
-                  Pending approval
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-stone-400 mt-0.5">{option.description}</p>
-          </div>
-
-          {/* Arrow */}
-          {option.available && (
-            <svg className="h-4 w-4 flex-shrink-0 mt-1 text-stone-300" fill="none"
-              stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M9 5l7 7-7 7" />
-            </svg>
-          )}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 // ─── ChatBubble ───────────────────────────────────────────────────────────────
 
 function ChatBubble({
   message,
   messageIdx,
-  onPlatformSelect,
   onFeedback,
 }: {
-  message:          Message;
-  messageIdx:       number;
-  onPlatformSelect?: (platform: TrendPlatform) => void;
-  onFeedback?:      (idx: number, type: "positive" | "negative") => void;
+  message:     Message;
+  messageIdx:  number;
+  onFeedback?: (idx: number, type: "positive" | "negative") => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -494,7 +406,7 @@ function ChatBubble({
         </div>
 
         {/* Agent action buttons — copy + feedback */}
-        {message.role === "agent" && !message.awaitingPlatform && (
+        {message.role === "agent" && (
           <div className="flex items-center gap-1 px-1">
             {/* Copy */}
             <button
@@ -549,14 +461,6 @@ function ChatBubble({
           </div>
         )}
 
-        {/* Platform selector */}
-        {message.awaitingPlatform && onPlatformSelect && (
-          <PlatformSelector
-            onSelect={onPlatformSelect}
-            recommended={message.bestPlatform}
-          />
-        )}
-
         {/* Trend cards */}
         {message.role === "agent" && message.trends && message.trends.length > 0 && (
           <div className="flex flex-col gap-2">
@@ -570,22 +474,48 @@ function ChatBubble({
           </div>
         )}
 
-        {/* Intent reason — shown below user messages so owner can verify understanding */}
+        {/* Intent reason + plan — shown below user messages */}
         {message.role === "user" && message.intentData?.reason && (
           <div className="flex justify-end">
             <div
-              className="flex items-start gap-1.5 rounded-lg px-2 py-1.5 max-w-[90%]"
+              className="flex flex-col gap-2 rounded-lg px-3 py-2 max-w-[92%]"
               style={{ backgroundColor: olive[50], border: `1px solid ${olive[200]}` }}
             >
-              <svg className="h-3 w-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
-                viewBox="0 0 24 24" style={{ color: olive[600] }}>
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-              </svg>
-              <p className="text-[10px] leading-relaxed" style={{ color: olive[700] }}>
-                <span className="font-semibold">Agent understood: </span>
-                {message.intentData.reason}
-              </p>
+              {/* Reason */}
+              <div className="flex items-start gap-1.5">
+                <svg className="h-3 w-3 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor"
+                  viewBox="0 0 24 24" style={{ color: olive[600] }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                <p className="text-[10px] leading-relaxed" style={{ color: olive[700] }}>
+                  <span className="font-semibold">Agent understood: </span>
+                  {message.intentData.reason}
+                </p>
+              </div>
+
+              {/* Plan steps */}
+              {message.intentData.plan && message.intentData.plan.length > 0 && (
+                <div className="flex flex-col gap-1 pl-4 border-l-2" style={{ borderColor: olive[200] }}>
+                  <p className="text-[9px] uppercase tracking-widest font-semibold mb-0.5"
+                    style={{ color: olive[600] }}>
+                    Plan
+                  </p>
+                  {message.intentData.plan.map((step, i) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span
+                        className="flex-shrink-0 flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold"
+                        style={{ backgroundColor: olive[200], color: olive[800] }}
+                      >
+                        {i + 1}
+                      </span>
+                      <p className="text-[10px] leading-relaxed" style={{ color: olive[700] }}>
+                        {step}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -795,51 +725,11 @@ export default function HomePage() {
     const text = (pendingMessage ?? input).trim();
     if (!text || isTyping) return;
 
-    // If this is a trend query and no platform chosen yet — show selector
-    if (!platform && needsPlatformSelection(text)) {
-      setPendingMessage(text);
-      setInput("");
-      if (textareaRef.current) textareaRef.current.style.height = "64px";
-      // Add the user message + selector prompt to the chat
-      const userMessage: Message = { role: "user", text };
-      // Pre-fetch intent to get platform recommendation
-      let bestPlatform: "google" | "reddit" | "either" = "either";
-      try {
-        const intentRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/chat/intent`, {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({
-            message: text,
-            history: activeSession.messages.map(m => ({ role: m.role, text: m.text })),
-          }),
-        });
-        if (intentRes.ok) {
-          const intentData = await intentRes.json() as { best_platform?: "google" | "reddit" | "either" };
-          bestPlatform = intentData.best_platform ?? "either";
-        }
-      } catch { /* fall through with default */ }
-
-      updateSession(activeId, {
-        messages: [
-          ...activeSession.messages,
-          userMessage,
-          {
-            role:             "agent",
-            text:             "Which platform would you like to get trend data from?",
-            awaitingPlatform: true,
-            bestPlatform,
-          },
-        ],
-      });
-      return;
-    }
-
     // Clear pending state
     setPendingMessage(null);
 
-    // Remove awaitingPlatform message — user message is already in chat from first call
+    // Build updated messages
     const cleanMessages   = activeSession.messages.filter(m => !m.awaitingPlatform);
-    // Only add user message if it's not already the last user message in the chat
     const lastUserMsg     = [...cleanMessages].reverse().find(m => m.role === "user");
     const alreadyAdded    = lastUserMsg?.text === text;
     const updatedMessages = alreadyAdded
@@ -864,7 +754,7 @@ export default function HomePage() {
       // Single API call — /chat handles intent detection, trends, and reply
       const chatData = await sendChatMessage({
         message:  text,
-        history:  updatedMessages.map((m) => ({
+        history:  updatedMessages.slice(-20).map((m) => ({
           role: m.role,
           text: m.text,
           metadata: m.reasoning ?? m.trends ?? m.intentData ? {
@@ -874,7 +764,6 @@ export default function HomePage() {
             intent_data: m.intentData,
           } : undefined,
         })),
-        platform,
         ...(uploadedImage && { image_base64: uploadedImage.base64 }),
       });
 
@@ -948,21 +837,28 @@ export default function HomePage() {
   }
 
   function handleFeedback(messageIdx: number, type: "positive" | "negative") {
-    // Update message feedback state
     const updatedMessages = activeSession.messages.map((m, i) =>
       i === messageIdx ? { ...m, feedback: type } : m
     );
     updateSession(activeId, { messages: updatedMessages });
 
-    // Save to DB
     if (dbSessionId) {
       const msg = activeSession.messages[messageIdx];
+      // Find the user message preceding this agent message to get intent data
+      const prevUserMsg = [...activeSession.messages]
+        .slice(0, messageIdx)
+        .reverse()
+        .find(m => m.role === "user");
+
       void submitFeedback({
         session_id:  dbSessionId,
         message_idx: messageIdx,
         type,
         context:     msg?.text,
         reasoning:   activeSession.reasoning ?? undefined,
+        plan:        prevUserMsg?.intentData?.plan,
+        keyword:     prevUserMsg?.intentData?.keyword,
+        intent:      prevUserMsg?.intentData?.intent,
       });
     }
   }
@@ -1224,7 +1120,6 @@ export default function HomePage() {
                 key={i}
                 message={msg}
                 messageIdx={i}
-                onPlatformSelect={(platform) => void sendMessage(platform)}
                 onFeedback={handleFeedback}
               />
             ))}

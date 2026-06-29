@@ -34,6 +34,12 @@ SUPPLIER_DOMAINS = [
     "adjoaa.com",
     "motthelabel.com",
     "shoponuli.com",
+
+    # African fashion suppliers
+    "shopbusayo.com",
+    "diyanu.com",
+    "africaimports.com",
+    "dupsies.com",
 ]
 
 # Fashion media and editorial — used as fallback

@@ -367,7 +367,46 @@ async def handle_trend_query(message: str, intent: Intent, platform: str | None 
         }
 
     except Exception as e:
+        err_str = str(e)
         print(f"[responder] trend error: {e}")
+
+        # On rate limit — still run Etsy + product search and generate reasoning
+        if "429" in err_str or "Max retries" in err_str:
+            try:
+                products = await db_service.search_products(keyword=keyword, limit=8)
+                etsy_data = {}
+                try:
+                    from routers.etsy import get_etsy_insights
+                    etsy_data = await get_etsy_insights(keyword=keyword, listings=5, reviews=5)
+                except Exception:
+                    pass
+
+                reasoning = generate_trend_reasoning(
+                    keyword     = keyword,
+                    direction   = "unknown",
+                    change_pct  = 0,
+                    rising      = [],
+                    top         = [],
+                    spark_data  = [],
+                    spark_dates = [],
+                    products    = products,
+                    etsy_data   = etsy_data,
+                )
+
+                return {
+                    "reply":     (
+                        f"⚠️ Google Trends is temporarily rate-limited for \"{keyword}\". "
+                        f"I've pulled Etsy market data and matched your inventory instead. "
+                        f"Try again in a few minutes for full trend momentum data."
+                    ),
+                    "intent":    intent,
+                    "source":    "google_trends",
+                    "reasoning": reasoning,
+                    "trends":    [],
+                }
+            except Exception as e2:
+                print(f"[responder] fallback also failed: {e2}")
+
         return {
             "reply":  f"I had trouble fetching trend data for \"{keyword}\" right now. Try again in a moment.",
             "intent": intent,
@@ -400,6 +439,26 @@ async def handle_reddit_query(message: str, intent: Intent, keyword: str = "", s
             try:
                 posts = await fetch_subreddit_posts(sub, keyword, limit=8)
                 print(f"[reddit] r/{sub} returned {len(posts)} posts for '{keyword}'")
+
+                # Broaden keyword if no results
+                if not posts:
+                    words   = keyword.split()
+                    broader = " ".join(words[-2:]) if len(words) > 2 else " ".join(words[-1:])
+                    print(f"[reddit] broadening '{keyword}' → '{broader}'")
+                    posts = await fetch_subreddit_posts(sub, broader, limit=8)
+                    print(f"[reddit] r/{sub} returned {len(posts)} posts for '{broader}'")
+
+                # Final fallback — try just the category word
+                if not posts:
+                    for cat in ["dress", "bag", "perfume", "jewelry", "earring",
+                                "necklace", "bracelet", "clutch", "crossbody", "scent",
+                                "ankara", "african"]:
+                        if cat in keyword.lower():
+                            print(f"[reddit] category fallback '{cat}'")
+                            posts = await fetch_subreddit_posts(sub, cat, limit=8)
+                            if posts:
+                                break
+
                 for p in posts:
                     print(f"  - '{p['title']}' (score={p['score']}, comments={p['comments']})")
                 for post in posts:
@@ -602,17 +661,22 @@ async def handle_product_query(message: str, intent: Intent, keyword: str = "") 
         for p in products
     )
 
-    # Ask Claude to make a specific recommendation based on the query
+    # Ask Claude to answer the question with existence confirmation first
     try:
         client  = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
         prompt  = f"""You are Olive Mode AI — assistant for a Black-owned women's boutique in Detroit.
 
 The owner asked: "{message}"
 
-Here are the matching products from the Olive Mode database:
+Here are the matching products found in the Olive Mode database:
 {products_str}
 
-Give a direct, specific answer to their question. If they asked for top 3 for summer, pick the best 3 and explain briefly why each is a good summer pick. If they asked about pricing or inventory, answer that directly. Keep it under 120 words. No bullet overload."""
+Answer in this order:
+1. FIRST — directly confirm whether the product exists in the database. Start with "Yes, [product name] is in your inventory" or "I couldn't find [product name] in the database."
+2. THEN — if found, give the price, category and any relevant details
+3. FINALLY — if they asked for a recommendation (e.g. top 3 for summer), provide that
+
+Keep it under 120 words. Be direct and specific with product names and prices."""
 
         response = client.messages.create(
             model      = "claude-sonnet-4-6",
@@ -625,7 +689,10 @@ Give a direct, specific answer to their question. If they asked for top 3 for su
         reply = f"Found {len(products)} products matching \"{keyword}\" in the Olive Mode collection."
 
     return {
-        "reply":    reply,
+        "reply":    reply + (
+            f"\n\nWant me to research how \"{keyword}\" is trending on Google Trends and Reddit?"
+            if products else ""
+        ),
         "intent":   intent,
         "source":   "database",
         "products": [
@@ -677,39 +744,49 @@ TOOLS YOU HAVE ACCESS TO:
 - Google Trends: Search volume, momentum, rising/falling interest, regional data
 - Reddit: r/handbags, r/femalefashionadvice, r/jewelry, r/fragrance — community opinions
 - Etsy: Market pricing and buyer reviews (runs automatically in background)
-- Web Search: FashionGo, Faire, Adjoaa, Mott the Label, Onuli + Vogue, Elle, Harper's Bazaar
+- Web Search: FashionGo, Faire, Adjoaa, Mott the Label, Onuli, Busayo, D'IYANU, Africa Imports + Vogue, Elle, Harper's Bazaar
 - Olive Mode Database: The product inventory listed above — you have full access right now
 - Pinterest: UNAVAILABLE — pending API approval
 
-BEHAVIOUR RULES:
+CRITICAL BEHAVIOUR RULES:
+- READ YOUR PREVIOUS MESSAGE carefully before responding. If you asked a question and the owner answered it (even with just "yes", "no", "sure", "please"), ANSWER WHAT YOU OFFERED — don't ask another clarifying question.
+- "yes" after you offered help = proceed with what you offered
+- "no" after you offered something = acknowledge and ask what they'd prefer instead
 - When asked about inventory → reference actual products listed above by name and price
-- When asked follow-up questions → use data from earlier in the conversation
 - For new product categories → suggest running a Google or Reddit trend search
 - Be concise and direct — concrete recommendations with actual product names
 - NEVER say you don't have database access — you DO have the inventory listed above
-- For sourcing questions → mention FashionGo, Faire, Adjoaa, Mott the Label, Onuli
+- For sourcing questions → mention FashionGo, Faire, Adjoaa, Mott the Label, Onuli, Busayo, D'IYANU
 - Keep responses under 150 words — no markdown tables, no bullet point overload"""
 
     # Build messages with full history including structured results
+    # Cap history to last 12 messages — enough context without bloating the prompt
+    recent_history = (history or [])[-12:]
+
+    # Build messages with full history — properly attributed
     messages = []
-    if history:
-        for msg in history:
+    if recent_history:
+        for msg in recent_history:
             role    = "user" if msg.get("role") == "user" else "assistant"
             content = msg.get("text", "")
 
-            # Enrich assistant messages with their trend/reasoning context
-            metadata = msg.get("metadata", {})
+            # Enrich assistant messages with structured context
+            metadata = msg.get("metadata") or {}
             if role == "assistant" and metadata:
                 reasoning = metadata.get("reasoning", "")
                 trends    = metadata.get("trends", [])
+                intent    = (metadata.get("intent_data") or {}).get("keyword", "")
                 if reasoning:
-                    content += f"\n\n[AI Analysis from this response: {reasoning[:300]}]"
-                if trends:
-                    for t in trends[:1]:
-                        kw        = t.get("keyword", "")
-                        direction = t.get("prediction", "")
-                        rising    = [r["query"] for r in t.get("rising", [])[:3]]
-                        content  += f"\n[Trend data: '{kw}' is {direction}, rising searches: {', '.join(rising)}]"
+                    content += f"\n\n[My previous analysis: {reasoning[:400]}]"
+                if trends and isinstance(trends, list) and trends:
+                    t         = trends[0] if isinstance(trends[0], dict) else {}
+                    kw        = t.get("keyword", "")
+                    direction = t.get("prediction", "")
+                    rising    = [r["query"] for r in t.get("rising", [])[:3] if isinstance(r, dict)]
+                    if kw:
+                        content += f"\n[Trend data I retrieved: '{kw}' is {direction}, rising: {', '.join(rising)}]"
+                elif intent:
+                    content += f"\n[Topic I was helping with: '{intent}']"
 
             messages.append({"role": role, "content": content})
 
